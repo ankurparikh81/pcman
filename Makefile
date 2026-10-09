@@ -49,4 +49,7 @@ test: $(TARGET)
 clean:
 	rm -f $(OBJS) $(TARGET) tests/test_pcman pcman.exe
 
-.PHONY: all clean test
+compdb compile_commands.json:
+	@python3 scripts/gen_compdb.py
+
+.PHONY: all clean test compdb compile_commands.json

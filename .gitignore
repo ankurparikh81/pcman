@@ -7,3 +7,4 @@ tests/test_pcman.exe
 */.DS_Store
 *.swp
 build/
+compile_commands.json
