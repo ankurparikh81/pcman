@@ -1,0 +1,159 @@
+#pragma once
+#include "cga_renderer.hpp"
+#include "maze.hpp"
+#include "rom_data.hpp"
+#include <array>
+#include <cstdint>
+
+namespace pcman {
+
+// Direction values matching original Pcman v1.com:
+// 0 = Up, 1 = Down, 2 = Left, 3 = Right
+enum class Direction : uint8_t {
+    Up = 0,
+    Down = 1,
+    Left = 2,
+    Right = 3,
+    None = 255
+};
+
+inline Direction Opposite(Direction d) {
+    if (d == Direction::None) return Direction::None;
+    return static_cast<Direction>(static_cast<uint8_t>(d) ^ 1);
+}
+
+inline int DeltaRow(Direction d) {
+    switch (d) {
+        case Direction::Up:   return -1;
+        case Direction::Down: return 1;
+        default:              return 0;
+    }
+}
+
+inline int DeltaCol(Direction d) {
+    switch (d) {
+        case Direction::Left:  return -1;
+        case Direction::Right: return 1;
+        default:               return 0;
+    }
+}
+
+// Authentic coordinate conversion from entity grid units to CGA screen pixels
+inline int GridToPixelX(int gridX) { return 48 + gridX * 4; }
+inline int GridToPixelY(int gridY) { return -7 + gridY * 4; }
+
+enum class GhostType {
+    Blinky = 0, // Red / Chaser
+    Pinky = 1,  // Pink / Ambusher
+    Inky = 2,   // Cyan / Outside pen at start
+    Clyde = 3   // Orange / Feigning
+};
+
+struct EntityPosition {
+    int x = 0;
+    int y = 0;
+};
+
+class Pacman {
+public:
+    Pacman();
+
+    void Reset();
+    void SetRequestedDirection(Direction dir);
+    void Update(const Maze& maze);
+    void Render(CgaRenderer& renderer) const;
+
+    EntityPosition GetPos() const {
+        return { GridToPixelX(m_gridX), GridToPixelY(m_gridY) };
+    }
+    int GetGridY() const { return m_gridY; }
+    int GetGridX() const { return m_gridX; }
+    Direction GetDirection() const { return m_currentDir; }
+    void SetGridPos(int gridY, int gridX, Direction dir = Direction::Up) {
+        m_gridY = gridY;
+        m_gridX = gridX;
+        m_currentDir = dir;
+        m_requestedDir = dir;
+    }
+
+    int GetMouthFrame() const { return m_mouthFrame; }
+
+    bool IsDying() const { return m_isDying; }
+    void StartDying();
+    bool IsDeathComplete() const { return m_deathFrame >= 16; }
+    int GetDeathFrame() const { return m_deathFrame; }
+    void UpdateDeath();
+
+private:
+    int m_gridY = 25; // Authentic starting grid coordinates (0x1725 in ROM)
+    int m_gridX = 14;
+    Direction m_currentDir = Direction::Up;
+    Direction m_requestedDir = Direction::Up;
+    bool m_isMoving = true;
+
+    // Authentic initial mouth frame: 3 (half-open sprite at 0x1E09 / file offset 0x2E09 at 0x02F1 in v1.com)
+    int m_mouthFrame = 3;
+
+    bool m_isDying = false;
+    int m_deathFrame = 0;
+    int m_deathTick = 0;
+};
+
+class Ghost {
+public:
+    Ghost(GhostType type);
+
+    void Reset(int level);
+    void Update(const Maze& maze, int pacmanGridY, int pacmanGridX, const LevelConfig& levelCfg);
+    void Render(CgaRenderer& renderer, bool flashWhite) const;
+
+    void SetFrightened();
+    void ClearFrightened();
+    bool IsFrightened() const { return (m_flags & 1) != 0; }
+    bool IsEaten() const { return m_flags >= 6; }
+    bool IsInPen() const { return m_flags == 4; }
+    bool IsExitingPen() const { return m_flags == 2; }
+    void Eat();
+
+    EntityPosition GetPos() const;
+    int GetGridY() const { return m_gridY; }
+    int GetGridX() const { return m_gridX; }
+    GhostType GetType() const { return m_type; }
+    void SetGridPos(int gridY, int gridX, Direction dir = Direction::Up) {
+        m_gridY = gridY;
+        m_gridX = gridX;
+        m_dir = dir;
+        m_flags = 0;
+    }
+
+    // Manhattan distance collision check matching 0x089E..0x08B6 (|dY| + |dX| <= 2)
+    bool CheckCollision(int pacmanGridY, int pacmanGridX) const;
+
+private:
+    GhostType m_type;
+
+    // Authentic flags matching 0x2A38:
+    // 0 = Normal active, 1 = Frightened, 2 = Exiting pen, 4 = In pen, 6 = Eaten eyes
+    uint8_t m_flags = 0;
+
+    int m_gridY = 26;
+    int m_gridX = 38;
+
+    // Pixel coordinates for in-pen / exiting-pen motion
+    int m_penPixelX = 180;
+    int m_penPixelY = 105;
+
+    Direction m_dir = Direction::Up;
+    int m_footFrame = 0;
+    // Authentic speed/skip counter matching 0x2A37 in Pcman v1.com:
+    // 0 = normal, 1 = corner pause / intermediate, 2 = tunnel / frightened 50% speed
+    uint8_t m_speedSkip = 0;
+
+    Direction ChooseDirection(const Maze& maze, int pacmanGridY, int pacmanGridX, uint8_t ghostWeight);
+};
+
+// Authentic shared global 16-bit PRNG at DS:0x2D24 in Pcman v1.com (0x0C01..0x0C0C)
+uint16_t NextGlobalRandom();
+void ResetGlobalRandom(uint16_t seed = 0);
+
+} // namespace pcman

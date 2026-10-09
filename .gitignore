@@ -1,0 +1,9 @@
+*.o
+pcman
+pcman.exe
+tests/test_pcman
+tests/test_pcman.exe
+.DS_Store
+*/.DS_Store
+*.swp
+build/
