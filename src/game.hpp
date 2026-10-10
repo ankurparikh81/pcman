@@ -4,7 +4,6 @@
 #include "maze.hpp"
 #include "entities.hpp"
 #include <array>
-#include <string>
 
 namespace pcman {
 
