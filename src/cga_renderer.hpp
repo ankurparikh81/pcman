@@ -12,19 +12,24 @@ struct CgaPalette {
     Color colors[4];
 };
 
-inline const CgaPalette CGA_PALETTE_NORMAL = {
+inline constexpr CgaPalette CGA_PALETTE_NORMAL = {
     Color{ 0, 0, 0, 255 },       // 0: Black
     Color{ 85, 255, 85, 255 },   // 1: Light Green
     Color{ 255, 85, 85, 255 },   // 2: Bright Red
     Color{ 255, 255, 85, 255 }   // 3: Yellow
 };
 
-inline const CgaPalette CGA_PALETTE_FLASH = {
+inline constexpr CgaPalette CGA_PALETTE_FLASH = {
     Color{ 0, 0, 0, 255 },       // 0: Black
     Color{ 255, 255, 255, 255 }, // 1: White
     Color{ 85, 85, 255, 255 },   // 2: Light Blue
     Color{ 255, 255, 255, 255 }  // 3: White
 };
+
+constexpr Color CgaColor(uint8_t colorIdx, bool flash = false) {
+    const auto& pal = flash ? CGA_PALETTE_FLASH : CGA_PALETTE_NORMAL;
+    return pal.colors[colorIdx & 3];
+}
 
 class CgaRenderer {
 public:

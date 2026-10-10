@@ -17,12 +17,12 @@ enum class Direction : uint8_t {
     None = 255
 };
 
-inline Direction Opposite(Direction d) {
+constexpr Direction Opposite(Direction d) {
     if (d == Direction::None) return Direction::None;
     return static_cast<Direction>(static_cast<uint8_t>(d) ^ 1);
 }
 
-inline int DeltaRow(Direction d) {
+constexpr int DeltaRow(Direction d) {
     switch (d) {
         case Direction::Up:   return -1;
         case Direction::Down: return 1;
@@ -30,7 +30,7 @@ inline int DeltaRow(Direction d) {
     }
 }
 
-inline int DeltaCol(Direction d) {
+constexpr int DeltaCol(Direction d) {
     switch (d) {
         case Direction::Left:  return -1;
         case Direction::Right: return 1;
@@ -39,8 +39,37 @@ inline int DeltaCol(Direction d) {
 }
 
 // Authentic coordinate conversion from entity grid units to CGA screen pixels
-inline int GridToPixelX(int gridX) { return 48 + gridX * 4; }
-inline int GridToPixelY(int gridY) { return -7 + gridY * 4; }
+constexpr int GridToPixelX(int gridX) { return 48 + gridX * 4; }
+constexpr int GridToPixelY(int gridY) { return -7 + gridY * 4; }
+
+// Manhattan distance between two grid points
+constexpr int ManhattanDist(int y1, int x1, int y2, int x2) {
+    int dy = y1 - y2;
+    int dx = x1 - x2;
+    return (dy < 0 ? -dy : dy) + (dx < 0 ? -dx : dx);
+}
+
+// Authentic Manhattan distance collision check matching 0x089E..0x08B6 (|dY| + |dX| <= 2)
+constexpr bool CheckGridCollision(int y1, int x1, int y2, int x2) {
+    return ManhattanDist(y1, x1, y2, x2) <= 2;
+}
+
+// Authentic vertical wrap-around tunnel (rows 0..57 in grid units, matching 0x0770..0x0795 & 0x0870..0x0896)
+inline constexpr int TUNNEL_GRID_ROWS = 58;
+
+constexpr int WrapTunnelGridY(int gridY) {
+    if (gridY < 0) return gridY + TUNNEL_GRID_ROWS;
+    if (gridY >= TUNNEL_GRID_ROWS) return gridY - TUNNEL_GRID_ROWS;
+    return gridY;
+}
+
+// Authentic Ghost pen coordinates & boundaries from ROM template 0x0725 & AI routine 0x09AD..0x09EF
+inline constexpr int PEN_DOOR_GRID_Y  = 26;
+inline constexpr int PEN_DOOR_GRID_X  = 38;
+inline constexpr int PEN_DOOR_PIXEL_X = 200;
+inline constexpr int PEN_DOOR_PIXEL_Y = 93;
+inline constexpr int PEN_BOUNCE_MIN_X = 168;
+inline constexpr int PEN_BOUNCE_MAX_X = 184;
 
 enum class GhostType {
     Blinky = 0, // Red / Chaser
@@ -48,6 +77,23 @@ enum class GhostType {
     Inky = 2,   // Cyan / Outside pen at start
     Clyde = 3   // Orange / Feigning
 };
+
+struct GhostInitConfig {
+    uint8_t flags = 0;
+    int penPixelX = 0;
+    int penPixelY = 0;
+    int gridY = 0;
+    int gridX = 0;
+    Direction dir = Direction::Up;
+};
+
+// Initial entity states from ROM template table at DS:0x0725
+inline constexpr std::array<GhostInitConfig, 4> GHOST_INIT_CONFIGS = {{
+    { 4, 180, 105, 26, 38, Direction::Left  }, // Ghost 0 (Blinky): inside pen
+    { 4, 172,  93, 26, 38, Direction::Right }, // Ghost 1 (Pinky): inside pen
+    { 0, 200,  93, 25, 38, Direction::Up    }, // Ghost 2 (Inky): outside pen
+    { 4, 180,  81, 26, 38, Direction::Left  }  // Ghost 3 (Clyde): inside pen
+}};
 
 struct EntityPosition {
     int x = 0;
@@ -151,6 +197,13 @@ private:
 
     Direction ChooseDirection(const Maze& maze, int pacmanGridY, int pacmanGridX, uint8_t ghostWeight);
 };
+
+// Authentic 16-bit LCG step verbatim from routine 0x0C01 in Pcman v1.com:
+// seed = (seed * 0x98DD + 0xD5EF) & 0xFFFF
+// Computed in uint32_t: uint16_t would promote to int, and seed * 0x98DD overflows int for large seeds.
+constexpr uint16_t LcgStep(uint16_t seed) {
+    return static_cast<uint16_t>(static_cast<uint32_t>(seed) * 0x98DDu + 0xD5EFu);
+}
 
 // Authentic shared global 16-bit PRNG at DS:0x2D24 in Pcman v1.com (0x0C01..0x0C0C)
 uint16_t NextGlobalRandom();

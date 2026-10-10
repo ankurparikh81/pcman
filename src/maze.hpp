@@ -14,14 +14,14 @@ public:
     // Authentic 30-stride collision map queries matching 0x1673 in v1.com
     static constexpr int COLLISION_STRIDE = 30;
     static constexpr int COLLISION_ROWS = 29;
-    static constexpr size_t COLLISION_SIZE = 887;
+    static constexpr size_t COLLISION_SIZE = data::COLLISION_MAP.size();
 
     bool IsWalkable(int cellRow, int cellCol) const;
     uint8_t GetCell(int cellRow, int cellCol) const;
     uint8_t CheckAndEatDotAtGrid(int gridY, int gridX);
 
     int GetRemainingDots() const;
-    int GetTotalDots() const;
+    static constexpr int GetTotalDots() { return TOTAL_PELLETS; }
 
     // Render the maze background tiles & remaining dots
     void Render(CgaRenderer& renderer) const;

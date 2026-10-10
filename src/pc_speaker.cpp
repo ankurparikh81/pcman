@@ -14,6 +14,26 @@ namespace {
     constexpr uint16_t CH0_TABLE[8] = { 5000, 2, 6000, 2, 7500, 2, 10000, 2 }; // DS:0x2FB4
     constexpr uint16_t CH1_TABLE[8] = { 675, 736, 803, 875, 955, 1041, 1135, 1238 }; // DS:0x2FC4
     constexpr uint16_t CH2_TABLE[8] = { 400, 436, 480, 533, 600, 533, 480, 436 }; // DS:0x2FA2
+
+    // Verify the channel tables are consistent with the ROM divisor tables in game_data.hpp
+    template <std::size_t N, typename Table>
+    constexpr bool MatchesRom(const uint16_t (&table)[N], const Table& rom, std::size_t offset) {
+        for (std::size_t i = 0; i < N; ++i) {
+            if (offset + i >= rom.size() || table[i] != rom[offset + i]) return false;
+        }
+        return true;
+    }
+    static_assert(MatchesRom(CH0_TABLE, data::SIREN_DIVISORS, 0));
+    static_assert(MatchesRom(CH1_TABLE, data::AUDIO_DIVISORS, 17));
+    static_assert(MatchesRom(CH2_TABLE, data::AUDIO_DIVISORS, 0));
+
+    // Convert PIT channel 2 divisor to frequency in Hz. Divisor <= 2 turns speaker off in v1.com
+    constexpr float DivisorToFrequency(uint16_t divisor) {
+        if (divisor <= 2) return 0.0f;
+        return PIT_CLOCK / static_cast<float>(divisor);
+    }
+    static_assert(DivisorToFrequency(2) == 0.0f);
+    static_assert(DivisorToFrequency(0) == 0.0f);
 }
 
 PcSpeaker::PcSpeaker() {
@@ -183,11 +203,7 @@ void PcSpeaker::Tick18Hz() {
     }
 
     // Set frequency: divisor <= 2 means silence in PC-Man v1.com
-    if (divisor > 2) {
-        m_frequency = PIT_CLOCK / static_cast<float>(divisor);
-    } else {
-        m_frequency = 0.0f;
-    }
+    m_frequency = DivisorToFrequency(divisor);
 }
 
 void PcSpeaker::AudioInputCallback(void* buffer, unsigned int frames) {
@@ -215,9 +231,7 @@ void PcSpeaker::FillAudioBuffer(int16_t* buffer, unsigned int frames) {
             int note = m_ghostEatenSample / SAMPLES_PER_GHOST_NOTE;
             if (note < 24) {
                 uint16_t divisor = RomData::GetGhostEatenSoundDivisor(note);
-                if (divisor > 2) {
-                    curFreq = PIT_CLOCK / static_cast<float>(divisor);
-                }
+                curFreq = DivisorToFrequency(divisor);
                 m_ghostEatenSample++;
             } else {
                 m_ghostEatenActive = false;

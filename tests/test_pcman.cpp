@@ -7,6 +7,45 @@
 
 using namespace pcman;
 
+// =========================================================================
+// Compile-time checks (evaluated by the compiler; build fails on regression)
+// =========================================================================
+static_assert(RomData::Size() == 16448);
+static_assert(RomData::GetMazeTile(1)[0] == 0x55);
+static_assert(RomData::GetMazeTile(200)[0] == 0x00);                 // out of range -> tile 0
+static_assert(RomData::GetPacmanSprite(0, 2)[1] == 0x0F && RomData::GetPacmanSprite(0, 2)[2] == 0xFC);
+static_assert(RomData::GetLevelConfig(1).frightTime == 200);
+static_assert(RomData::GetLevelConfig(99).penThresh == 65535);         // clamps to level 12
+static_assert(RomData::GetFruitScore(0) == 150);
+static_assert(RomData::GetAudioDivisorCount() == 66 && RomData::GetAudioDivisor(0) == 400);
+static_assert(RomData::GetTitleTuneDivisor(0) == 852);
+static_assert(RomData::GetDeathSoundDivisor(2) == 2275);
+static_assert(RomData::GetGhostEatenSoundDivisor(23) == 923);
+static_assert(RomData::GetSirenDivisor(-8) == 5000 && RomData::GetFruitEatDivisor(6) == 675);
+static_assert(INITIAL_DOT_COUNT == TOTAL_PELLETS && Maze::GetTotalDots() == TOTAL_PELLETS);
+static_assert([] {
+    uint8_t buf[SPRITE_BYTES]{};
+    RomData::ComposeGhostSprite(0, 0, 0, buf);                          // Blinky, Up, Foot 0
+    return buf[32] == 0x15 && buf[33] == 0x55 && buf[34] == 0x55 && buf[35] == 0x54;
+}());
+static_assert(Opposite(Direction::Left) == Direction::Right && Opposite(Direction::Up) == Direction::Down);
+static_assert(Opposite(Direction::None) == Direction::None);
+static_assert(DeltaRow(Direction::Up) == -1 && DeltaCol(Direction::Right) == 1 && DeltaCol(Direction::Up) == 0);
+static_assert(GridToPixelX(14) == 104 && GridToPixelY(25) == 93);
+static_assert(LcgStep(0) == 0xD5EF);
+static_assert(LcgStep(0xFFFF) == 0x3D12);  // (-1 * 0x98DD + 0xD5EF) mod 2^16; no signed overflow
+static_assert(RomData::GetGhostSprite(0, 0, 0)[32] == 0x15);            // Zero-copy sprite accessor
+static_assert(CgaColor(0).a == 255 && CgaColor(1).g == 255);            // CgaColor palette mapper
+static_assert(ManhattanDist(25, 38, 24, 37) == 2);
+static_assert(CheckGridCollision(25, 38, 24, 37));                      // dist <= 2
+static_assert(!CheckGridCollision(25, 38, 23, 37));                     // dist 3 -> no collision
+static_assert(WrapTunnelGridY(-1) == 57 && WrapTunnelGridY(58) == 0 && WrapTunnelGridY(25) == 25);
+static_assert(GHOST_INIT_CONFIGS[static_cast<size_t>(GhostType::Blinky)].penPixelX == 180);
+static_assert(GHOST_INIT_CONFIGS[static_cast<size_t>(GhostType::Inky)].flags == 0);
+static_assert(GhostComboScore(1) == 200 && GhostComboScore(2) == 400 && GhostComboScore(4) == 1600);
+static_assert(GhostComboScore(5) == 1600);                              // capped combo
+static_assert(CheckTouchBox(152, 93, 152, 93, 8) && !CheckTouchBox(152, 93, 161, 93, 8));
+
 void TestRomData() {
     std::cout << "[Test] Validating ROM data extraction...\n";
 

@@ -104,7 +104,7 @@ void Game::HandleInput() {
 void Game::UpdateTitleScreen() {
     // Clock title intro tune strictly at 18.2065 Hz BIOS tick frequency
     m_tickAccumulator += GetFrameTime();
-    if (m_tickAccumulator > 0.25f) m_tickAccumulator = 0.25f;
+    if (m_tickAccumulator > MAX_TICK_ACCUMULATOR) m_tickAccumulator = MAX_TICK_ACCUMULATOR;
     while (m_tickAccumulator >= BIOS_TICK_INTERVAL) {
         m_tickAccumulator -= BIOS_TICK_INTERVAL;
         m_speaker.Tick18Hz();
@@ -139,7 +139,7 @@ void Game::UpdatePlaying() {
     }
 
     m_tickAccumulator += GetFrameTime();
-    if (m_tickAccumulator > 0.25f) m_tickAccumulator = 0.25f; // Prevent spiral if paused
+    if (m_tickAccumulator > MAX_TICK_ACCUMULATOR) m_tickAccumulator = MAX_TICK_ACCUMULATOR; // Prevent spiral if paused
 
     while (m_tickAccumulator >= BIOS_TICK_INTERVAL) {
         m_tickAccumulator -= BIOS_TICK_INTERVAL;
@@ -158,7 +158,7 @@ void Game::Tick18Hz() {
     if (atIntersection) {
         uint8_t dot = m_maze.CheckAndEatDotAtGrid(m_pacman.GetGridY(), m_pacman.GetGridX());
         if (dot == 2) {
-            m_score += 10;
+            m_score += SCORE_PELLET;
             // Authentic dot eating pacing from 0x0733 in v1.com: neg byte [0x2ccc]
             // Pac-Man pauses on alternate dots (every 2nd dot), not every single dot!
             m_dotPauseToggle = -m_dotPauseToggle;
@@ -167,7 +167,7 @@ void Game::Tick18Hz() {
                 dotEatenThisTick = true;
             }
         } else if (dot == 3) {
-            m_score += 50;
+            m_score += SCORE_ENERGIZER;
             m_ghostCombo = 0;
             m_speaker.TriggerEnergizer();
             auto cfg = RomData::GetLevelConfig(m_level);
@@ -192,7 +192,7 @@ void Game::Tick18Hz() {
     }
 
     // Extra life at 10,000 points (authentic 0x0E5D..0x0E72 in v1.com)
-    if (m_score >= 10000 && !m_awardedExtraLife) {
+    if (m_score >= SCORE_EXTRA_LIFE && !m_awardedExtraLife) {
         m_lives++;
         m_awardedExtraLife = true;
         m_speaker.TriggerExtraLife();
@@ -211,9 +211,9 @@ void Game::Tick18Hz() {
     // Authentic Pcman v1.com Fruit spawn trigger (0x0BF1..0x0C0B in ROM):
     // Spawns when dots remaining reaches 170 (0xAA) or 80 (0x50)
     int remainingDots = m_maze.GetRemainingDots();
-    if (!m_fruitActive && (remainingDots == 170 || remainingDots == 80)) {
+    if (!m_fruitActive && (remainingDots == FRUIT_SPAWN_DOTS_1 || remainingDots == FRUIT_SPAWN_DOTS_2)) {
         m_fruitActive = true;
-        m_fruitTimer = 135; // Authentic 0x87 ticks in v1.com (~7.4 seconds)
+        m_fruitTimer = FRUIT_ACTIVE_TICKS; // Authentic 0x87 ticks in v1.com (~7.4 seconds)
     }
     if (m_fruitActive) {
         m_fruitTimer--;
@@ -221,15 +221,13 @@ void Game::Tick18Hz() {
             m_fruitActive = false;
         } else {
             // Check Pac-Man touching fruit at authentic CGA address 0x2E86 (pixel X=152, Y=93)
-            int dx = m_pacman.GetPos().x - FRUIT_X;
-            int dy = m_pacman.GetPos().y - FRUIT_Y;
-            if (std::abs(dx) < 8 && std::abs(dy) < 8) {
+            if (CheckTouchBox(m_pacman.GetPos().x, m_pacman.GetPos().y, FRUIT_X, FRUIT_Y, 8)) {
                 int fruitIdx = std::min(m_level - 1, 7);
                 int fruitBonus = RomData::GetFruitScore(fruitIdx);
                 m_score += fruitBonus;
                 m_fruitActive = false;
                 m_fruitScorePopup = fruitBonus;
-                m_fruitPopupTimer = 60; // Authentic 0x3C ticks in v1.com (~3.3 seconds)
+                m_fruitPopupTimer = FRUIT_POPUP_TICKS; // Authentic 0x3C ticks in v1.com (~3.3 seconds)
                 m_speaker.TriggerFruitEat();
             }
         }
@@ -254,11 +252,11 @@ void Game::Tick18Hz() {
             if (g.IsFrightened()) {
                 g.Eat();
                 m_ghostCombo++;
-                int comboScore = 200 * (1 << std::min(m_ghostCombo - 1, 3));
+                int comboScore = GhostComboScore(m_ghostCombo);
                 m_score += comboScore;
                 m_eatenGhostScore = comboScore;
                 m_eatenGhostPos = g.GetPos();
-                m_ghostFreezeTimer = 24.0f * (806.0f / 44100.0f); // ~0.4386s freeze matching 0x0CE1..0x0D09 in ROM
+                m_ghostFreezeTimer = GHOST_FREEZE_DURATION; // ~0.4386s freeze matching 0x0CE1..0x0D09 in ROM
                 m_speaker.TriggerGhostEatenSound();
                 return;
             } else if (!g.IsEaten()) {
@@ -289,7 +287,7 @@ void Game::Tick18Hz() {
 void Game::UpdatePacmanDying() {
     // Advance death melting animation and audio using authentic 18.2Hz clock (34 ticks total)
     m_tickAccumulator += GetFrameTime();
-    if (m_tickAccumulator > 0.25f) m_tickAccumulator = 0.25f;
+    if (m_tickAccumulator > MAX_TICK_ACCUMULATOR) m_tickAccumulator = MAX_TICK_ACCUMULATOR;
     while (m_tickAccumulator >= BIOS_TICK_INTERVAL) {
         m_tickAccumulator -= BIOS_TICK_INTERVAL;
         m_pacman.UpdateDeath();
@@ -311,7 +309,7 @@ void Game::UpdatePacmanDying() {
 
 void Game::UpdateLevelClear() {
     m_flashTimer += GetFrameTime();
-    if (m_flashTimer >= 0.12f) { // ~8Hz CGA border flashing
+    if (m_flashTimer >= LEVEL_CLEAR_FLASH_INTERVAL) { // ~8Hz CGA border flashing
         m_flashTimer = 0.0f;
         m_flashState = !m_flashState;
         m_renderer.SetFlashMode(m_flashState);

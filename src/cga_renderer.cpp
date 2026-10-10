@@ -7,6 +7,21 @@ namespace pcman {
 // Standard IBM PC BIOS 8x8 font for characters 0x20..0x7E
 namespace {
     #include "font_data.inl"
+
+    // Extract 2bpp CGA Mode 4 pixel p (0..3, left to right) from a packed byte
+    constexpr uint8_t CgaPixel(uint8_t b, int p) {
+        return static_cast<uint8_t>((b >> (6 - p * 2)) & 3);
+    }
+
+    // Look up the BIOS 8x8 glyph for ch, substituting ' ' for non-printable characters
+    constexpr const uint8_t* GlyphFor(char ch) {
+        uint8_t u = static_cast<uint8_t>(ch);
+        if (u < 0x20 || u > 0x7E) u = ' ';
+        return &FONT_8X8[(u - 0x20) * 8];
+    }
+
+    static_assert(CgaPixel(0b11'10'01'00, 0) == 3 && CgaPixel(0b11'10'01'00, 3) == 0);
+    static_assert(GlyphFor('\x01') == GlyphFor(' '));
 }
 
 CgaRenderer::CgaRenderer() {
@@ -58,7 +73,7 @@ void CgaRenderer::BlitTile4x4(int screenX, int screenY, uint8_t tileId) {
         for (int p = 0; p < 4; ++p) {
             int px = screenX + p;
             if (px < 0 || px >= CGA_WIDTH) continue;
-            uint8_t c = (b >> (6 - p * 2)) & 3;
+            uint8_t c = CgaPixel(b, p);
             m_cgaBuffer[py * CGA_WIDTH + px] = c;
         }
     }
@@ -76,14 +91,14 @@ void CgaRenderer::BlitDot8x8(int screenX, int screenY, uint8_t dotType) {
         for (int p = 0; p < 4; ++p) {
             int px = screenX + p;
             if (px >= 0 && px < CGA_WIDTH) {
-                uint8_t c = (b0 >> (6 - p * 2)) & 3;
+                uint8_t c = CgaPixel(b0, p);
                 if (c != 0) m_cgaBuffer[py * CGA_WIDTH + px] = c;
             }
         }
         for (int p = 0; p < 4; ++p) {
             int px = screenX + 4 + p;
             if (px >= 0 && px < CGA_WIDTH) {
-                uint8_t c = (b1 >> (6 - p * 2)) & 3;
+                uint8_t c = CgaPixel(b1, p);
                 if (c != 0) m_cgaBuffer[py * CGA_WIDTH + px] = c;
             }
         }
@@ -101,7 +116,7 @@ void CgaRenderer::BlitSpriteRaw(int screenX, int screenY, const uint8_t* sprite5
             for (int p = 0; p < 4; ++p) {
                 int px = screenX + byteIdx * 4 + p;
                 if (px < 0 || px >= CGA_WIDTH) continue;
-                uint8_t c = (b >> (6 - p * 2)) & 3;
+                uint8_t c = CgaPixel(b, p);
                 if (!transparent || c != 0) {
                     m_cgaBuffer[py * CGA_WIDTH + px] = c;
                 }
@@ -126,7 +141,7 @@ void CgaRenderer::BlitLogoLetter36x23(int screenX, int screenY, int letterIndex)
             for (int p = 0; p < 4; ++p) {
                 int px = screenX + byteIdx * 4 + p;
                 if (px < 0 || px >= CGA_WIDTH) continue;
-                uint8_t c = (b >> (6 - p * 2)) & 3;
+                uint8_t c = CgaPixel(b, p);
                 m_cgaBuffer[py * CGA_WIDTH + px] = c;
             }
         }
@@ -146,9 +161,7 @@ void CgaRenderer::DrawText8x8(int screenX, int screenY, const std::string& text,
         }
         if (ch == '\r') continue;
 
-        uint8_t u = static_cast<uint8_t>(ch);
-        if (u < 0x20 || u > 0x7E) u = ' ';
-        const uint8_t* glyph = &FONT_8X8[(u - 0x20) * 8];
+        const uint8_t* glyph = GlyphFor(ch);
 
         for (int y = 0; y < 8; ++y) {
             int py = curY + y;
@@ -187,9 +200,7 @@ void CgaRenderer::DrawTextVertical8x8(int screenX, int startY, const std::string
             continue;
         }
 
-        uint8_t u = static_cast<uint8_t>(ch);
-        if (u < 0x20 || u > 0x7E) u = ' ';
-        const uint8_t* glyph = &FONT_8X8[(u - 0x20) * 8];
+        const uint8_t* glyph = GlyphFor(ch);
 
         for (int y = 0; y < 8; ++y) {
             int py = curY + y;
@@ -208,9 +219,8 @@ void CgaRenderer::DrawTextVertical8x8(int screenX, int startY, const std::string
 }
 
 void CgaRenderer::UpdateTextureFromBuffer() {
-    const CgaPalette& pal = m_flash ? CGA_PALETTE_FLASH : CGA_PALETTE_NORMAL;
     for (size_t i = 0; i < m_cgaBuffer.size(); ++i) {
-        m_pixelBuffer[i] = pal.colors[m_cgaBuffer[i]];
+        m_pixelBuffer[i] = CgaColor(m_cgaBuffer[i], m_flash);
     }
     UpdateTexture(m_screenTexture, m_pixelBuffer.data());
 }
@@ -218,7 +228,7 @@ void CgaRenderer::UpdateTextureFromBuffer() {
 void CgaRenderer::Present(int windowWidth, int windowHeight) {
     UpdateTextureFromBuffer();
 
-    float targetAspect = 4.0f / 3.0f;
+    constexpr float targetAspect = 4.0f / 3.0f;
     float winWidth = static_cast<float>(windowWidth);
     float winHeight = static_cast<float>(windowHeight);
     float winAspect = winWidth / winHeight;

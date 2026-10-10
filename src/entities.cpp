@@ -98,11 +98,7 @@ void Pacman::Update(const Maze& maze) {
     }
 
     // Authentic vertical wrap-around tunnel (rows 0..57 in grid units, matching 0x0770..0x0795)
-    if (m_gridY < 0) {
-        m_gridY += 58;
-    } else if (m_gridY > 57) {
-        m_gridY -= 58;
-    }
+    m_gridY = WrapTunnelGridY(m_gridY);
 
     if (m_isMoving) {
         m_mouthFrame = (m_mouthFrame + 1) & 3;
@@ -137,7 +133,7 @@ Ghost::Ghost(GhostType type) : m_type(type) {
 static uint16_t s_globalRngSeed = 0x0000;
 
 uint16_t NextGlobalRandom() {
-    s_globalRngSeed = static_cast<uint16_t>(s_globalRngSeed * 0x98DD + 0xD5EF);
+    s_globalRngSeed = LcgStep(s_globalRngSeed);
     return s_globalRngSeed;
 }
 
@@ -150,41 +146,13 @@ void Ghost::Reset(int level) {
     m_footFrame = 0;
     m_speedSkip = 0;
 
-    // Initial entity states from ROM template table at DS:0x0725:
-    switch (m_type) {
-        case GhostType::Blinky: // Ghost 0 (Red): inside pen, flags = 4, dir = Left
-            m_flags = 4;
-            m_penPixelX = 180;
-            m_penPixelY = 105;
-            m_gridY = 26;
-            m_gridX = 38;
-            m_dir = Direction::Left;
-            break;
-        case GhostType::Pinky:  // Ghost 1 (Pink): inside pen, flags = 4, dir = Right
-            m_flags = 4;
-            m_penPixelX = 172;
-            m_penPixelY = 93;
-            m_gridY = 26;
-            m_gridX = 38;
-            m_dir = Direction::Right;
-            break;
-        case GhostType::Inky:   // Ghost 2 (Cyan): OUTSIDE pen, flags = 0, dir = Up
-            m_flags = 0;
-            m_penPixelX = 200;
-            m_penPixelY = 93;
-            m_gridY = 25;
-            m_gridX = 38;
-            m_dir = Direction::Up;
-            break;
-        case GhostType::Clyde:  // Ghost 3 (Orange): inside pen, flags = 4, dir = Left
-            m_flags = 4;
-            m_penPixelX = 180;
-            m_penPixelY = 81;
-            m_gridY = 26;
-            m_gridX = 38;
-            m_dir = Direction::Left;
-            break;
-    }
+    const auto& cfg = GHOST_INIT_CONFIGS[static_cast<size_t>(m_type)];
+    m_flags = cfg.flags;
+    m_penPixelX = cfg.penPixelX;
+    m_penPixelY = cfg.penPixelY;
+    m_gridY = cfg.gridY;
+    m_gridX = cfg.gridX;
+    m_dir = cfg.dir;
 }
 
 void Ghost::SetFrightened() {
@@ -214,10 +182,8 @@ bool Ghost::CheckCollision(int pacmanGridY, int pacmanGridX) const {
     // cmp [bx+0x2a38], 2; jnl no_collision (eyes, pen, exiting cannot collide)
     if (m_flags >= 2) return false;
 
-    // Manhattan distance in internal grid coordinates:
-    // |ghost_y - pacman_y| + |ghost_x - pacman_x| <= 2
-    int dist = std::abs(m_gridY - pacmanGridY) + std::abs(m_gridX - pacmanGridX);
-    return dist <= 2;
+    // Authentic Manhattan distance check (|dY| + |dX| <= 2)
+    return CheckGridCollision(m_gridY, m_gridX, pacmanGridY, pacmanGridX);
 }
 
 // Exact translation of the 8086 Ghost AI decision function at 0x095A..0x0AFF in Pcman v1.com
@@ -235,8 +201,8 @@ Direction Ghost::ChooseDirection(const Maze& maze, int pacmanGridY, int pacmanGr
     if (m_flags >= 6) {
         // Eaten eyes returning to pen entrance door at (grid_y = 26, grid_x = 38)
         weight = 0x3C; // Maximum pursuit weight (60)
-        targetY = 26;
-        targetX = 38;
+        targetY = PEN_DOOR_GRID_Y;
+        targetX = PEN_DOOR_GRID_X;
         isFrightened = false;
     }
 
@@ -332,41 +298,41 @@ void Ghost::Update(const Maze& maze, int pacmanGridY, int pacmanGridX, const Lev
             // Inside pen bouncing horizontally (0x09AD..0x09EF)
             m_penPixelX += DeltaCol(m_dir) * 4;
 
-            if (m_penPixelX <= 168) {
-                m_penPixelX = 168;
+            if (m_penPixelX <= PEN_BOUNCE_MIN_X) {
+                m_penPixelX = PEN_BOUNCE_MIN_X;
                 m_dir = Direction::Right;
 
                 // Authentic pen release roll when turning from left boundary to Right (0x0AD2 in v1.com)
                 if ((m_flags & 1) == 0 && NextGlobalRandom() < levelCfg.penThresh) {
                     m_flags = 2; // Transition to exiting pen
                 }
-            } else if (m_penPixelX >= 184) {
-                m_penPixelX = 184;
+            } else if (m_penPixelX >= PEN_BOUNCE_MAX_X) {
+                m_penPixelX = PEN_BOUNCE_MAX_X;
                 m_dir = Direction::Left;
             }
             m_footFrame ^= 1;
             break;
         } else if (m_flags == 2) {
             // Exiting pen: move towards door position (pixel_x = 200, pixel_y = 93)
-            if (m_penPixelX < 200) {
-                m_penPixelX = std::min(m_penPixelX + 4, 200);
+            if (m_penPixelX < PEN_DOOR_PIXEL_X) {
+                m_penPixelX = std::min(m_penPixelX + 4, PEN_DOOR_PIXEL_X);
                 m_dir = Direction::Right;
-            } else if (m_penPixelX > 200) {
-                m_penPixelX = std::max(m_penPixelX - 4, 200);
+            } else if (m_penPixelX > PEN_DOOR_PIXEL_X) {
+                m_penPixelX = std::max(m_penPixelX - 4, PEN_DOOR_PIXEL_X);
                 m_dir = Direction::Left;
-            } else if (m_penPixelY < 93) {
-                m_penPixelY = std::min(m_penPixelY + 4, 93);
+            } else if (m_penPixelY < PEN_DOOR_PIXEL_Y) {
+                m_penPixelY = std::min(m_penPixelY + 4, PEN_DOOR_PIXEL_Y);
                 m_dir = Direction::Down;
-            } else if (m_penPixelY > 93) {
-                m_penPixelY = std::max(m_penPixelY - 4, 93);
+            } else if (m_penPixelY > PEN_DOOR_PIXEL_Y) {
+                m_penPixelY = std::max(m_penPixelY - 4, PEN_DOOR_PIXEL_Y);
                 m_dir = Direction::Up;
             }
 
-            if (m_penPixelX == 200 && m_penPixelY == 93) {
+            if (m_penPixelX == PEN_DOOR_PIXEL_X && m_penPixelY == PEN_DOOR_PIXEL_Y) {
                 // Ghost passed through door into maze!
                 m_flags = 0;
                 m_gridY = 25;
-                m_gridX = 38;
+                m_gridX = PEN_DOOR_GRID_X;
                 m_dir = (NextGlobalRandom() & 1) ? Direction::Up : Direction::Down;
             }
             m_footFrame ^= 1;
@@ -393,17 +359,13 @@ void Ghost::Update(const Maze& maze, int pacmanGridY, int pacmanGridX, const Lev
             m_footFrame ^= 1;
 
             // Authentic vertical tunnel wrapping (rows 0..57 in grid units, matching 0x0870..0x0896)
-            if (m_gridY < 0) {
-                m_gridY += 58;
-            } else if (m_gridY > 57) {
-                m_gridY -= 58;
-            }
+            m_gridY = WrapTunnelGridY(m_gridY);
 
             // If eaten eyes reached door entrance (grid_y = 26, grid_x = 38):
-            if (m_flags >= 6 && m_gridY == 26 && m_gridX == 38) {
+            if (m_flags >= 6 && m_gridY == PEN_DOOR_GRID_Y && m_gridX == PEN_DOOR_GRID_X) {
                 m_flags = 4; // Back in pen bouncing
                 m_penPixelX = 172;
-                m_penPixelY = 93;
+                m_penPixelY = PEN_DOOR_PIXEL_Y;
                 m_dir = Direction::Right;
                 break;
             }
@@ -441,9 +403,8 @@ void Ghost::Render(CgaRenderer& renderer, bool flashWhite) const {
     int dirIdx = static_cast<int>(m_dir);
     if (dirIdx < 0 || dirIdx > 3) dirIdx = 0;
 
-    uint8_t spriteBuf[56];
-    RomData::ComposeGhostSprite(variation, dirIdx, m_footFrame, spriteBuf);
-    renderer.BlitSpriteRaw(px, py, spriteBuf, true);
+    auto sprite = RomData::GetGhostSprite(variation, dirIdx, m_footFrame);
+    renderer.BlitSpriteRaw(px, py, sprite.data(), true);
 }
 
 } // namespace pcman

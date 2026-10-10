@@ -16,6 +16,23 @@ enum class GameState {
     GameOver
 };
 
+// Check if two points are within rectangular touch radius (used for fruit touch)
+constexpr bool CheckTouchBox(int x1, int y1, int x2, int y2, int radius = 8) {
+    int dx = x1 - x2;
+    int dy = y1 - y2;
+    if (dx < 0) dx = -dx;
+    if (dy < 0) dy = -dy;
+    return dx < radius && dy < radius;
+}
+
+// Authentic ghost eat combo score (200, 400, 800, 1600 points)
+constexpr int GhostComboScore(int combo) {
+    if (combo <= 0) return 200;
+    int shift = combo - 1;
+    if (shift > 3) shift = 3;
+    return 200 * (1 << shift);
+}
+
 class Game {
 public:
     Game();
@@ -83,6 +100,19 @@ private:
     static constexpr float DEATH_DURATION = 34.0f / 18.2065f;   // 17 frames * 2 ticks = 34 ticks (~1.87s)
     static constexpr float LEVEL_CLEAR_DURATION = 1.50f;         // 7 border flash cycles at 0x04EC
     static constexpr float GAME_OVER_DURATION = 3.00f;
+    // 24 arpeggio notes * 806 samples @ 44.1kHz (~0.4386s freeze matching 0x0CE1..0x0D09 in ROM)
+    static constexpr float GHOST_FREEZE_DURATION = 24.0f * (806.0f / 44100.0f);
+    static constexpr float MAX_TICK_ACCUMULATOR = 0.25f;         // Prevent spiral of death after pauses
+    static constexpr float LEVEL_CLEAR_FLASH_INTERVAL = 0.12f;   // ~8Hz CGA border flashing
+
+    // Authentic scoring and bonus constants matching 0x0676..0x0BF1 in v1.com
+    static constexpr int SCORE_PELLET        = 10;
+    static constexpr int SCORE_ENERGIZER     = 50;
+    static constexpr int SCORE_EXTRA_LIFE    = 10000;
+    static constexpr int FRUIT_SPAWN_DOTS_1  = 170; // 0xAA dots remaining
+    static constexpr int FRUIT_SPAWN_DOTS_2  = 80;  // 0x50 dots remaining
+    static constexpr int FRUIT_ACTIVE_TICKS  = 135; // 0x87 ticks in v1.com (~7.4 seconds)
+    static constexpr int FRUIT_POPUP_TICKS   = 60;  // 0x3C ticks in v1.com (~3.3 seconds)
 
     // State transition timers (in seconds, frame-rate independent)
     float m_stateTimer = 0.0f;

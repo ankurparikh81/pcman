@@ -1,5 +1,6 @@
 #include "maze.hpp"
 #include "game_data.hpp"
+#include "rom_data.hpp"
 
 namespace pcman {
 
@@ -8,15 +9,9 @@ Maze::Maze() {
 }
 
 void Maze::Reset() {
-    m_remainingDots = 0;
     m_cells = data::COLLISION_MAP;
-
-    for (size_t i = 0; i < COLLISION_SIZE; ++i) {
-        uint8_t d = m_cells[i];
-        if (d == 2 || d == 3) {
-            m_remainingDots++;
-        }
-    }
+    // Dot + energizer count of the pristine map is computed at compile time
+    m_remainingDots = INITIAL_DOT_COUNT;
 }
 
 bool Maze::IsWalkable(int cellRow, int cellCol) const {
@@ -60,10 +55,6 @@ uint8_t Maze::CheckAndEatDotAtGrid(int gridY, int gridX) {
 
 int Maze::GetRemainingDots() const {
     return m_remainingDots;
-}
-
-int Maze::GetTotalDots() const {
-    return TOTAL_PELLETS;
 }
 
 void Maze::Render(CgaRenderer& renderer) const {
