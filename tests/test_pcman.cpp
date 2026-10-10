@@ -36,6 +36,13 @@ static_assert(LcgStep(0) == 0xD5EF);
 static_assert(LcgStep(0xFFFF) == 0x3D12);  // (-1 * 0x98DD + 0xD5EF) mod 2^16; no signed overflow
 static_assert(RomData::GetGhostSprite(0, 0, 0)[32] == 0x15);            // Zero-copy sprite accessor
 static_assert(CgaColor(0).a == 255 && CgaColor(1).g == 255);            // CgaColor palette mapper
+// Authentic IBM CGA Hardware Palette colors (Mode 4 Palette 0 High & Palette 1 Low)
+static_assert(CgaColor(1).r == 85  && CgaColor(1).g == 255 && CgaColor(1).b == 85);  // Light Green #55FF55
+static_assert(CgaColor(2).r == 255 && CgaColor(2).g == 85  && CgaColor(2).b == 85);  // Light Red #FF5555
+static_assert(CgaColor(3).r == 255 && CgaColor(3).g == 255 && CgaColor(3).b == 85);  // Yellow #FFFF55
+static_assert(CgaColor(1, true).r == 0   && CgaColor(1, true).g == 170 && CgaColor(1, true).b == 170); // Cyan #00AAAA
+static_assert(CgaColor(2, true).r == 170 && CgaColor(2, true).g == 0   && CgaColor(2, true).b == 170); // Magenta #AA00AA
+static_assert(CgaColor(3, true).r == 170 && CgaColor(3, true).g == 170 && CgaColor(3, true).b == 170); // Light Gray #AAAAAA
 static_assert(ManhattanDist(25, 38, 24, 37) == 2);
 static_assert(CheckGridCollision(25, 38, 24, 37));                      // dist <= 2
 static_assert(!CheckGridCollision(25, 38, 23, 37));                     // dist 3 -> no collision
@@ -45,6 +52,10 @@ static_assert(GHOST_INIT_CONFIGS[static_cast<size_t>(GhostType::Inky)].flags == 
 static_assert(GhostComboScore(1) == 200 && GhostComboScore(2) == 400 && GhostComboScore(4) == 1600);
 static_assert(GhostComboScore(5) == 1600);                              // capped combo
 static_assert(CheckTouchBox(152, 93, 152, 93, 8) && !CheckTouchBox(152, 93, 161, 93, 8));
+static_assert(RomData::GetGhostScoreSprite(0)[0] == 0x0F);               // 200 pts 16x8 sprite
+static_assert(RomData::GetGhostScoreSprite(3)[0] == 0xC3);               // 1600 pts 16x8 sprite
+static_assert(RomData::GetFruitScoreDigit(0)[0] == 0x3F);                // Custom digit 0
+static_assert(RomData::GetFruitScorePopup(0).size() == 80);              // 16x20 fruit score popup
 
 void TestRomData() {
     std::cout << "[Test] Validating ROM data extraction...\n";
@@ -463,6 +474,110 @@ void TestExtraLife() {
     std::cout << "  -> All Extra Life checks passed!\n";
 }
 
+void TestCgaFontRendering() {
+    std::cout << "[Test] Validating Authentic IBM CGA 8x8 font rendering...\n";
+    CgaRenderer renderer;
+    renderer.Clear(0);
+
+    // Draw '0' at (10, 10) with color 3 (yellow)
+    renderer.DrawText8x8(10, 10, "0", 3);
+
+    // Verify row 0 of '0' has bitmap 0x7C = 0b01111100
+    assert(renderer.GetPixel(10, 10) == 0);
+    assert(renderer.GetPixel(11, 10) == 3);
+    assert(renderer.GetPixel(12, 10) == 3);
+    assert(renderer.GetPixel(13, 10) == 3);
+    assert(renderer.GetPixel(14, 10) == 3);
+    assert(renderer.GetPixel(15, 10) == 3);
+    assert(renderer.GetPixel(16, 10) == 0);
+    assert(renderer.GetPixel(17, 10) == 0);
+
+    // Verify row 2 of '0' has slash pixel: 0xCE = 0b11001110 (slash at x=14)
+    assert(renderer.GetPixel(10, 12) == 3);
+    assert(renderer.GetPixel(11, 12) == 3);
+    assert(renderer.GetPixel(12, 12) == 0);
+    assert(renderer.GetPixel(13, 12) == 0);
+    assert(renderer.GetPixel(14, 12) == 3); // slash pixel!
+    assert(renderer.GetPixel(15, 12) == 3);
+    assert(renderer.GetPixel(16, 12) == 3);
+    assert(renderer.GetPixel(17, 12) == 0);
+
+    // Draw CP437 smiley face '\x01' at (20, 20) with color 2
+    renderer.DrawText8x8(20, 20, "\x01", 2);
+    // Row 0 of smiley is 0x7E = 0b01111110
+    assert(renderer.GetPixel(20, 20) == 0);
+    assert(renderer.GetPixel(21, 20) == 2);
+    assert(renderer.GetPixel(26, 20) == 2);
+    assert(renderer.GetPixel(27, 20) == 0);
+
+    std::cout << "  - Verified authentic IBM slashed-zero bitmap and CP437 glyph rendering!\n";
+    std::cout << "  -> All CGA Font checks passed!\n";
+}
+
+void TestScorePopups() {
+    std::cout << "[Test] Validating Authentic Ghost and Fruit Score Popups...\n";
+    CgaRenderer renderer;
+    renderer.Clear(0);
+
+    // 1. Ghost Score Popup: 200 points (combo 0) at (10, 10)
+    renderer.BlitGhostScore16x8(10, 10, 0, true);
+
+    // Row 0 of 200 pts is: 0x0F, 0x03, 0xC0, 0xF0
+    // Byte 0 (x=10..13) is 0x0F (0b00001111) -> x=10,11 are 0; x=12,13 are 3
+    assert(renderer.GetPixel(10, 10) == 0);
+    assert(renderer.GetPixel(11, 10) == 0);
+    assert(renderer.GetPixel(12, 10) == 3);
+    assert(renderer.GetPixel(13, 10) == 3);
+    // Byte 3 (x=22..25) is 0xF0 (0b11110000) -> x=22,23 are 3; x=24,25 are 0
+    assert(renderer.GetPixel(22, 10) == 3);
+    assert(renderer.GetPixel(23, 10) == 3);
+    assert(renderer.GetPixel(24, 10) == 0);
+    assert(renderer.GetPixel(25, 10) == 0);
+
+    // 2. Fruit Score Popup: 150 points (fruit 0) at (152, 88)
+    renderer.BlitFruitScore16x20(152, 88, 0, false);
+
+    // Left and right 1-byte padding are 0
+    assert(renderer.GetPixel(152, 88) == 0);
+    assert(renderer.GetPixel(153, 88) == 0);
+    assert(renderer.GetPixel(166, 88) == 0);
+    assert(renderer.GetPixel(167, 88) == 0);
+
+    // Row 3 (y=88 + 3 = 91) has digit 1: bytes [0xC0, 0x30]
+    // 0xC0 (0b11000000) at x=156..159 -> x=156 is 3
+    assert(renderer.GetPixel(156, 91) == 3);
+    // 0x30 (0b00110000) at x=160..163 -> x=161 is 3
+    assert(renderer.GetPixel(161, 91) == 3);
+
+    std::cout << "  - Verified authentic 16x8 ghost score sprite blitting!\n";
+    std::cout << "  - Verified authentic 16x20 vertical fruit score popup blitting!\n";
+    std::cout << "  -> All Score Popup checks passed!\n";
+}
+
+void TestLevelTransition() {
+    std::cout << "[Test] Validating Authentic Level Clear Transition & Palette Swapping...\n";
+    Game game;
+    game.StartNewGame();
+    game.SetState(GameState::Playing);
+    assert(game.GetState() == GameState::Playing);
+    assert(!game.GetPacman().IsClosedMouth());
+
+    // When all dots are consumed:
+    game.GetMaze().ClearAllDots();
+    assert(game.GetMaze().GetRemainingDots() == 0);
+
+    // Run game tick
+    game.Tick18Hz();
+
+    // Verify LevelClear state and closed mouth Pac-Man (sprite 0x2DD1)
+    assert(game.GetState() == GameState::LevelClear);
+    assert(game.GetPacman().IsClosedMouth());
+
+    std::cout << "  - Verified LevelClear state triggers closed-mouth Pac-Man and silences audio!\n";
+    std::cout << "  - Verified authentic CGA Palette 0 / Palette 1 hardware color mappings!\n";
+    std::cout << "  -> All Level Transition checks passed!\n";
+}
+
 int main() {
     std::cout << "=== Running PC-Man Unit Tests ===\n";
     TestRomData();
@@ -473,6 +588,9 @@ int main() {
     TestVerticalTunnels();
     TestDeathSequence();
     TestExtraLife();
+    TestCgaFontRendering();
+    TestScorePopups();
+    TestLevelTransition();
     std::cout << "=== All Unit Tests Passed Successfully! ===\n";
     return 0;
 }

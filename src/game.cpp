@@ -277,9 +277,11 @@ void Game::Tick18Hz() {
     // 4. Check Level Clear
     if (m_maze.GetRemainingDots() == 0) {
         m_state = GameState::LevelClear;
-        m_stateTimer = LEVEL_CLEAR_DURATION; // Authentic 1.50s border flashing
+        m_stateTimer = LEVEL_CLEAR_DURATION; // Authentic ~2.60s sequence at 0x038C..0x040A in v1.com
         m_flashTimer = 0.0f;
         m_flashState = false;
+        m_pacman.SetClosedMouth(true);       // Authentic solid circle mouth frame (0x2DD1 in ROM)
+        m_renderer.SetFlashMode(false);
         m_speaker.Silence();
     }
 }
@@ -308,13 +310,6 @@ void Game::UpdatePacmanDying() {
 }
 
 void Game::UpdateLevelClear() {
-    m_flashTimer += GetFrameTime();
-    if (m_flashTimer >= LEVEL_CLEAR_FLASH_INTERVAL) { // ~8Hz CGA border flashing
-        m_flashTimer = 0.0f;
-        m_flashState = !m_flashState;
-        m_renderer.SetFlashMode(m_flashState);
-    }
-
     m_stateTimer -= GetFrameTime();
     if (m_stateTimer <= 0.0f) {
         m_renderer.SetFlashMode(false);
@@ -322,6 +317,20 @@ void Game::UpdateLevelClear() {
         if (m_level > 12) m_level = 12;
         m_maze.Reset();
         StartNewRound();
+        return;
+    }
+
+    float elapsed = LEVEL_CLEAR_DURATION - m_stateTimer;
+    if (elapsed < LEVEL_CLEAR_INITIAL_PAUSE) {
+        m_renderer.SetFlashMode(false);
+    } else {
+        float flashTime = elapsed - LEVEL_CLEAR_INITIAL_PAUSE;
+        int cycle = static_cast<int>(flashTime / LEVEL_CLEAR_FLASH_INTERVAL);
+        if (cycle >= LEVEL_CLEAR_FLASH_COUNT) cycle = LEVEL_CLEAR_FLASH_COUNT - 1;
+        // Even cycle (0, 2, 4, 6) = Palette 1 (0x20 in v1.com: Cyan/Magenta/White)
+        // Odd cycle (1, 3, 5) = Palette 0 (0x10 in v1.com: Green/Red/Yellow)
+        bool flashPalette = (cycle % 2 == 0);
+        m_renderer.SetFlashMode(flashPalette);
     }
 }
 
@@ -391,7 +400,7 @@ void Game::RenderTitleScreen() {
         m_renderer.BlitLogoLetter36x23(LOGO_X[i], 8, i);
     }
 
-    // Authentic Pcman v1.com strings at DS:0x05F8 (row * 8, col * 8, Color 2 = Magenta):
+    // Authentic Pcman v1.com strings at DS:0x05F8 (row * 8, col * 8, Color 2 = Light Red):
     // Displayed ONLY AFTER title song has finished (or was skipped)!
     if (m_speaker.IsTitleTuneDone()) {
         m_renderer.DrawText8x8(152, 72, "by", 2);
@@ -416,29 +425,31 @@ void Game::Render() {
             auto fruitSprite = RomData::GetFruitSprite(fruitIdx);
             m_renderer.BlitSpriteRaw(FRUIT_X, FRUIT_Y, fruitSprite.data(), true);
         } else if (m_fruitPopupTimer > 0) {
-            char pbuf[8];
-            int len = std::snprintf(pbuf, sizeof(pbuf), "%d", m_fruitScorePopup);
             // Authentic Pcman v1.com vertical fruit score popup at 0x0DE6 (pixel X = 152..167, Y = 88..107)
-            m_renderer.ClearRect(152, 88, 16, 20, 0);
-            int spacing = (len <= 3) ? 6 : 5;
-            m_renderer.DrawTextVertical8x8(156, 88, pbuf, 3, spacing);
-        }
-
-        // Frightened Ghost Eaten Score Popup (0x0CE1..0x0D12 in ROM)
-        if (m_ghostFreezeTimer > 0.0f) {
-            char gbuf[8];
-            std::snprintf(gbuf, sizeof(gbuf), "%d", m_eatenGhostScore);
-            m_renderer.DrawText8x8(m_eatenGhostPos.x, m_eatenGhostPos.y, gbuf, 3);
+            int fruitIdx = std::min(m_level - 1, 7);
+            m_renderer.BlitFruitScore16x20(152, 88, fruitIdx, false);
         }
 
         // Entities
         m_pacman.Render(m_renderer);
 
-        if (m_state != GameState::PacmanDying) {
+        if (m_state != GameState::PacmanDying && m_state != GameState::LevelClear) {
             bool flashWhite = (m_frightTimer > 0 && m_frightTimer <= 70 && ((m_frightTimer / 8) % 2 == 1));
             for (const auto& g : m_ghosts) {
+                // When displaying eaten ghost score during freeze pause, hide the eaten ghost's eyes
+                if (m_ghostFreezeTimer > 0.0f && g.IsEaten() &&
+                    static_cast<int>(g.GetPos().x) == static_cast<int>(m_eatenGhostPos.x) &&
+                    static_cast<int>(g.GetPos().y) == static_cast<int>(m_eatenGhostPos.y)) {
+                    continue;
+                }
                 g.Render(m_renderer, flashWhite);
             }
+        }
+
+        // Frightened Ghost Eaten Score Popup (0x0CE1..0x0D12 in ROM: 16x8 dedicated sprite)
+        if (m_ghostFreezeTimer > 0.0f) {
+            int comboIdx = std::clamp(m_ghostCombo - 1, 0, 3);
+            m_renderer.BlitGhostScore16x8(static_cast<int>(m_eatenGhostPos.x), static_cast<int>(m_eatenGhostPos.y) + 3, comboIdx, true);
         }
 
         // Authentic Pcman v1.com overlays

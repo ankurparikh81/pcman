@@ -46,8 +46,13 @@ public:
     // Game state accessors & simulation for testing
     int GetScore() const { return m_score; }
     int GetLives() const { return m_lives; }
+    int GetLevel() const { return m_level; }
+    GameState GetState() const { return m_state; }
+    void SetState(GameState state) { m_state = state; }
     void SetScore(int score) { m_score = score; }
     bool HasAwardedExtraLife() const { return m_awardedExtraLife; }
+    const Pacman& GetPacman() const { return m_pacman; }
+    Maze& GetMaze() { return m_maze; }
     void StartNewGame();
     void Tick18Hz();
 
@@ -98,12 +103,16 @@ private:
     static constexpr float BIOS_TICK_INTERVAL = 1.0f / 18.2065f; // ~54.925ms per tick
     static constexpr float READY_DURATION = 1.63f;               // 4.77MHz CPU busy-wait loops at 0x045A & 0x04AC
     static constexpr float DEATH_DURATION = 34.0f / 18.2065f;   // 17 frames * 2 ticks = 34 ticks (~1.87s)
-    static constexpr float LEVEL_CLEAR_DURATION = 1.50f;         // 7 border flash cycles at 0x04EC
+    // Authentic 7 hardware CGA palette flips at 0x03EC..0x0408 on 4.77MHz 8088 PC-XT:
+    // Initial pause ~0.15s (0x03AC), 7 toggles of 0x20/0x10 to Port 0x3D9 at ~0.35s each (total ~2.60s)
+    static constexpr float LEVEL_CLEAR_INITIAL_PAUSE = 0.15f;
+    static constexpr float LEVEL_CLEAR_FLASH_INTERVAL = 0.35f;
+    static constexpr int   LEVEL_CLEAR_FLASH_COUNT = 7;
+    static constexpr float LEVEL_CLEAR_DURATION = LEVEL_CLEAR_INITIAL_PAUSE + LEVEL_CLEAR_FLASH_COUNT * LEVEL_CLEAR_FLASH_INTERVAL;
     static constexpr float GAME_OVER_DURATION = 3.00f;
     // 24 arpeggio notes * 806 samples @ 44.1kHz (~0.4386s freeze matching 0x0CE1..0x0D09 in ROM)
     static constexpr float GHOST_FREEZE_DURATION = 24.0f * (806.0f / 44100.0f);
     static constexpr float MAX_TICK_ACCUMULATOR = 0.25f;         // Prevent spiral of death after pauses
-    static constexpr float LEVEL_CLEAR_FLASH_INTERVAL = 0.12f;   // ~8Hz CGA border flashing
 
     // Authentic scoring and bonus constants matching 0x0676..0x0BF1 in v1.com
     static constexpr int SCORE_PELLET        = 10;

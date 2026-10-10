@@ -34,17 +34,32 @@ inline constexpr int LOGO_LETTER_WIDTH = 36;
 inline constexpr int LOGO_LETTER_HEIGHT = 23;
 inline constexpr int LOGO_LETTER_BYTES = 207;
 
+// Ghost Score dimensions
+inline constexpr int GHOST_SCORE_WIDTH = 16;
+inline constexpr int GHOST_SCORE_HEIGHT = 8;
+inline constexpr int GHOST_SCORE_BYTES = 32;
+
+// Fruit Score Popup dimensions
+inline constexpr int FRUIT_SCORE_POPUP_WIDTH = 16;
+inline constexpr int FRUIT_SCORE_POPUP_HEIGHT = 20;
+inline constexpr int FRUIT_SCORE_POPUP_BYTES = 80;
+
 // Compile-time guards: dimension constants must agree with the embedded ROM tables
 // (CGA Mode 4 is 2 bits per pixel => 4 pixels per byte)
 static_assert(data::MAZE_GRID.size() == MAZE_COLS * MAZE_ROWS);
 static_assert(SPRITE_BYTES == (SPRITE_WIDTH / 4) * SPRITE_HEIGHT);
 static_assert(LOGO_LETTER_BYTES == (LOGO_LETTER_WIDTH / 4) * LOGO_LETTER_HEIGHT);
+static_assert(GHOST_SCORE_BYTES == (GHOST_SCORE_WIDTH / 4) * GHOST_SCORE_HEIGHT);
+static_assert(FRUIT_SCORE_POPUP_BYTES == (FRUIT_SCORE_POPUP_WIDTH / 4) * FRUIT_SCORE_POPUP_HEIGHT);
 static_assert(std::size(data::LOGO_LETTERS) == LOGO_LETTERS);
 static_assert(data::LOGO_LETTERS[0].size() == LOGO_LETTER_BYTES);
 static_assert(data::PACMAN_SPRITES[0].size() == SPRITE_BYTES);
 static_assert(data::DEATH_SPRITES[0].size() == SPRITE_BYTES);
 static_assert(data::GHOST_SPRITES[0][0][0].size() == SPRITE_BYTES);
 static_assert(data::FRUITS[0].sprite.size() == SPRITE_BYTES);
+static_assert(std::size(data::GHOST_SCORE_SPRITES) == 4);
+static_assert(std::size(data::FRUIT_SCORE_DIGITS) == 7);
+static_assert(std::size(data::FRUIT_SCORE_POPUPS) == 8);
 
 namespace detail {
 // Number of dots (2) and energizers (3) in the initial collision map
@@ -121,6 +136,21 @@ public:
     static constexpr int GetFruitScore(int fruitIndex) {
         fruitIndex = std::clamp(fruitIndex, 0, detail::LastIndex(std::size(data::FRUITS)));
         return data::FRUITS[fruitIndex].score;
+    }
+
+    static constexpr std::span<const uint8_t, GHOST_SCORE_BYTES> GetGhostScoreSprite(int comboIndex) {
+        comboIndex = std::clamp(comboIndex, 0, detail::LastIndex(std::size(data::GHOST_SCORE_SPRITES)));
+        return std::span<const uint8_t, GHOST_SCORE_BYTES>(data::GHOST_SCORE_SPRITES[comboIndex].data(), GHOST_SCORE_BYTES);
+    }
+
+    static constexpr std::span<const uint8_t, FRUIT_SCORE_POPUP_BYTES> GetFruitScorePopup(int fruitIndex) {
+        fruitIndex = std::clamp(fruitIndex, 0, detail::LastIndex(std::size(data::FRUIT_SCORE_POPUPS)));
+        return std::span<const uint8_t, FRUIT_SCORE_POPUP_BYTES>(data::FRUIT_SCORE_POPUPS[fruitIndex].data(), FRUIT_SCORE_POPUP_BYTES);
+    }
+
+    static constexpr std::span<const uint8_t, 8> GetFruitScoreDigit(int digit) {
+        digit = std::clamp(digit, 0, detail::LastIndex(std::size(data::FRUIT_SCORE_DIGITS)));
+        return std::span<const uint8_t, 8>(data::FRUIT_SCORE_DIGITS[digit].data(), 8);
     }
 
     static constexpr std::span<const uint8_t, SPRITE_BYTES> GetSprite(int spriteIndex) {

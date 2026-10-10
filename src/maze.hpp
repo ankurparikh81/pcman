@@ -21,6 +21,7 @@ public:
     uint8_t CheckAndEatDotAtGrid(int gridY, int gridX);
 
     int GetRemainingDots() const;
+    void ClearAllDots() { m_remainingDots = 0; }
     static constexpr int GetTotalDots() { return TOTAL_PELLETS; }
 
     // Render the maze background tiles & remaining dots

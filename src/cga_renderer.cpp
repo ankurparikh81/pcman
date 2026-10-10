@@ -4,7 +4,7 @@
 
 namespace pcman {
 
-// Standard IBM PC BIOS 8x8 font for characters 0x20..0x7E
+// Authentic IBM PC CGA Mode 4 / ROM BIOS 8x8 font (Code Page 437)
 namespace {
     #include "font_data.inl"
 
@@ -13,15 +13,17 @@ namespace {
         return static_cast<uint8_t>((b >> (6 - p * 2)) & 3);
     }
 
-    // Look up the BIOS 8x8 glyph for ch, substituting ' ' for non-printable characters
+    // Look up the authentic IBM PC CGA / CP437 8x8 glyph for ch
     constexpr const uint8_t* GlyphFor(char ch) {
         uint8_t u = static_cast<uint8_t>(ch);
-        if (u < 0x20 || u > 0x7E) u = ' ';
-        return &FONT_8X8[(u - 0x20) * 8];
+        return &FONT_8X8[u * 8];
     }
 
     static_assert(CgaPixel(0b11'10'01'00, 0) == 3 && CgaPixel(0b11'10'01'00, 3) == 0);
-    static_assert(GlyphFor('\x01') == GlyphFor(' '));
+    static_assert(GlyphFor(' ')[0] == 0x00);
+    static_assert(GlyphFor('\x01')[0] == 0x7E);                           // Authentic IBM CP437 smiley face
+    static_assert(GlyphFor('0')[0] == 0x7C && GlyphFor('0')[2] == 0xCE); // Authentic IBM slashed zero
+    static_assert(GlyphFor('A')[4] == 0xFC);                              // Crossbar of 'A'
 }
 
 CgaRenderer::CgaRenderer() {
@@ -105,14 +107,15 @@ void CgaRenderer::BlitDot8x8(int screenX, int screenY, uint8_t dotType) {
     }
 }
 
-void CgaRenderer::BlitSpriteRaw(int screenX, int screenY, const uint8_t* sprite56, bool transparent) {
-    if (!sprite56) return;
-    for (int y = 0; y < SPRITE_HEIGHT; ++y) {
+void CgaRenderer::BlitBitmap2bpp(int screenX, int screenY, int width, int height, const uint8_t* data, bool transparent) {
+    if (!data) return;
+    int bytesPerRow = width / 4;
+    for (int y = 0; y < height; ++y) {
         int py = screenY + y;
         if (py < 0 || py >= CGA_HEIGHT) continue;
 
-        for (int byteIdx = 0; byteIdx < 4; ++byteIdx) {
-            uint8_t b = sprite56[y * 4 + byteIdx];
+        for (int byteIdx = 0; byteIdx < bytesPerRow; ++byteIdx) {
+            uint8_t b = data[y * bytesPerRow + byteIdx];
             for (int p = 0; p < 4; ++p) {
                 int px = screenX + byteIdx * 4 + p;
                 if (px < 0 || px >= CGA_WIDTH) continue;
@@ -125,6 +128,10 @@ void CgaRenderer::BlitSpriteRaw(int screenX, int screenY, const uint8_t* sprite5
     }
 }
 
+void CgaRenderer::BlitSpriteRaw(int screenX, int screenY, const uint8_t* sprite56, bool transparent) {
+    BlitBitmap2bpp(screenX, screenY, SPRITE_WIDTH, SPRITE_HEIGHT, sprite56, transparent);
+}
+
 void CgaRenderer::BlitSprite16x14(int screenX, int screenY, int spriteIndex, bool transparent) {
     auto spriteBytes = RomData::GetSprite(spriteIndex);
     BlitSpriteRaw(screenX, screenY, spriteBytes.data(), transparent);
@@ -132,20 +139,17 @@ void CgaRenderer::BlitSprite16x14(int screenX, int screenY, int spriteIndex, boo
 
 void CgaRenderer::BlitLogoLetter36x23(int screenX, int screenY, int letterIndex) {
     auto letterBytes = RomData::GetLogoLetter(letterIndex);
-    for (int y = 0; y < LOGO_LETTER_HEIGHT; ++y) {
-        int py = screenY + y;
-        if (py < 0 || py >= CGA_HEIGHT) continue;
+    BlitBitmap2bpp(screenX, screenY, LOGO_LETTER_WIDTH, LOGO_LETTER_HEIGHT, letterBytes.data(), false);
+}
 
-        for (int byteIdx = 0; byteIdx < 9; ++byteIdx) {
-            uint8_t b = letterBytes[y * 9 + byteIdx];
-            for (int p = 0; p < 4; ++p) {
-                int px = screenX + byteIdx * 4 + p;
-                if (px < 0 || px >= CGA_WIDTH) continue;
-                uint8_t c = CgaPixel(b, p);
-                m_cgaBuffer[py * CGA_WIDTH + px] = c;
-            }
-        }
-    }
+void CgaRenderer::BlitGhostScore16x8(int screenX, int screenY, int comboIndex, bool transparent) {
+    auto spriteBytes = RomData::GetGhostScoreSprite(comboIndex);
+    BlitBitmap2bpp(screenX, screenY, GHOST_SCORE_WIDTH, GHOST_SCORE_HEIGHT, spriteBytes.data(), transparent);
+}
+
+void CgaRenderer::BlitFruitScore16x20(int screenX, int screenY, int fruitIndex, bool transparent) {
+    auto popupBytes = RomData::GetFruitScorePopup(fruitIndex);
+    BlitBitmap2bpp(screenX, screenY, FRUIT_SCORE_POPUP_WIDTH, FRUIT_SCORE_POPUP_HEIGHT, popupBytes.data(), transparent);
 }
 
 void CgaRenderer::DrawText8x8(int screenX, int screenY, const std::string& text, uint8_t colorIdx) {
@@ -216,6 +220,11 @@ void CgaRenderer::DrawTextVertical8x8(int screenX, int startY, const std::string
         }
         curY += spacing;
     }
+}
+
+uint8_t CgaRenderer::GetPixel(int x, int y) const {
+    if (x < 0 || x >= CGA_WIDTH || y < 0 || y >= CGA_HEIGHT) return 0;
+    return m_cgaBuffer[y * CGA_WIDTH + x];
 }
 
 void CgaRenderer::UpdateTextureFromBuffer() {

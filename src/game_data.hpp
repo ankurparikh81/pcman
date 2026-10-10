@@ -1326,4 +1326,97 @@ inline constexpr std::array<uint16_t, 6> FRUIT_EAT_DIVISORS = {
     675, 736, 803, 875, 955, 1041
 };
 
+// 12. Ghost Eaten Score Sprites (4 sprites x 32 bytes CGA Mode 4 16x8 bitmaps at 0x35F1)
+// Scores: 200, 400, 800, 1600 points
+inline constexpr std::array<uint8_t, 32> GHOST_SCORE_SPRITES[4] = {
+    // [0] 200 points (16x8 pixels)
+    std::array<uint8_t, 32>{
+        0x0f, 0x03, 0xc0, 0xf0, 0x30, 0xcc, 0x33, 0x0c, 0x00, 0xcc, 0x33, 0x0c, 0x03, 0x0c, 0x33, 0x0c,
+        0x0c, 0x0c, 0x33, 0x0c, 0x30, 0x0c, 0x33, 0x0c, 0x3f, 0xc3, 0xc0, 0xf0, 0x00, 0x00, 0x00, 0x00
+    },
+    // [1] 400 points (16x8 pixels)
+    std::array<uint8_t, 32>{
+        0x30, 0xc3, 0xc0, 0xf0, 0x30, 0xcc, 0x33, 0x0c, 0x30, 0xcc, 0x33, 0x0c, 0x3f, 0xcc, 0x33, 0x0c,
+        0x00, 0xcc, 0x33, 0x0c, 0x00, 0xcc, 0x33, 0x0c, 0x00, 0xc3, 0xc0, 0xf0, 0x00, 0x00, 0x00, 0x00
+    },
+    // [2] 800 points (16x8 pixels)
+    std::array<uint8_t, 32>{
+        0x0f, 0x03, 0xc0, 0xf0, 0x30, 0xcc, 0x33, 0x0c, 0x30, 0xcc, 0x33, 0x0c, 0x0f, 0x0c, 0x33, 0x0c,
+        0x30, 0xcc, 0x33, 0x0c, 0x30, 0xcc, 0x33, 0x0c, 0x0f, 0x03, 0xc0, 0xf0, 0x00, 0x00, 0x00, 0x00
+    },
+    // [3] 1600 points (16x8 pixels)
+    std::array<uint8_t, 32>{
+        0xc3, 0xc0, 0xf0, 0x3c, 0xcc, 0x33, 0x0c, 0xc3, 0xcc, 0x03, 0x0c, 0xc3, 0xcf, 0xc3, 0x0c,
+        0xc3, 0xcc, 0x33, 0x0c, 0xc3, 0xcc, 0x33, 0x0c, 0xc3, 0xc3, 0xc0, 0xf0, 0x3c, 0x00, 0x00, 0x00, 0x00
+    }
+};
+
+// 13. Authentic Fruit Score Digits (7 digits x 8 bytes CGA Mode 4 8x4 rotated bitmaps at 0x3F06)
+// Digits: 0, 1, 2, 3, 4, 5, 6
+inline constexpr std::array<uint8_t, 8> FRUIT_SCORE_DIGITS[7] = {
+    // Digit 0
+    std::array<uint8_t, 8>{ 0x3f, 0xf0, 0xc0, 0x0c, 0xc0, 0x0c, 0x3f, 0xf0 },
+    // Digit 1
+    std::array<uint8_t, 8>{ 0x00, 0x00, 0xc0, 0x30, 0xff, 0xfc, 0xc0, 0x00 },
+    // Digit 2
+    std::array<uint8_t, 8>{ 0xf0, 0x30, 0xcc, 0x0c, 0xc3, 0x0c, 0xc0, 0xf0 },
+    // Digit 3
+    std::array<uint8_t, 8>{ 0x30, 0x30, 0xc0, 0x0c, 0xc3, 0x0c, 0x3c, 0xf0 },
+    // Digit 4
+    std::array<uint8_t, 8>{ 0x03, 0xfc, 0x03, 0x00, 0x03, 0x00, 0xff, 0xfc },
+    // Digit 5
+    std::array<uint8_t, 8>{ 0x33, 0xfc, 0xc3, 0x0c, 0xc3, 0x0c, 0x3c, 0x0c },
+    // Digit 6
+    std::array<uint8_t, 8>{ 0x3f, 0xf0, 0xc3, 0x0c, 0xc3, 0x0c, 0x3c, 0x30 }
+};
+
+// BCD digit representations of the 8 fruit bonus scores at 0x3D2E
+inline constexpr std::array<uint8_t, 3> FRUIT_BCD[8] = {
+    std::array<uint8_t, 3>{ 0, 1, 5 }, // 150
+    std::array<uint8_t, 3>{ 0, 3, 0 }, // 300
+    std::array<uint8_t, 3>{ 0, 6, 0 }, // 600
+    std::array<uint8_t, 3>{ 1, 0, 0 }, // 1000
+    std::array<uint8_t, 3>{ 1, 5, 0 }, // 1500
+    std::array<uint8_t, 3>{ 2, 5, 0 }, // 2500
+    std::array<uint8_t, 3>{ 4, 0, 0 }, // 4000
+    std::array<uint8_t, 3>{ 6, 0, 0 }  // 6000
+};
+
+// Precompiled 16x20 fruit score popups (8 fruits x 80 bytes CGA Mode 4) matching assembly 0x0B80..0x0C9D
+constexpr std::array<uint8_t, 80> ComposeFruitScorePopup(std::array<uint8_t, 3> bcd) {
+    std::array<uint8_t, 80> out{};
+    int row = 0;
+    int bp = 3;
+    int bx = 0;
+    if (bcd[0] == 0) {
+        row = 2;
+        bx = 1;
+        bp = 2;
+    }
+    while (bp > 0) {
+        uint8_t d = bcd[bx++];
+        const auto& dBytes = FRUIT_SCORE_DIGITS[d];
+        for (int r = 0; r < 4; ++r) {
+            out[(row + r) * 4 + 1] = dBytes[r * 2];
+            out[(row + r) * 4 + 2] = dBytes[r * 2 + 1];
+        }
+        row += 5;
+        --bp;
+    }
+    const auto& d0Bytes = FRUIT_SCORE_DIGITS[0];
+    for (int r = 0; r < 4; ++r) {
+        out[(row + r) * 4 + 1] = d0Bytes[r * 2];
+        out[(row + r) * 4 + 2] = d0Bytes[r * 2 + 1];
+    }
+    return out;
+}
+
+inline constexpr std::array<std::array<uint8_t, 80>, 8> FRUIT_SCORE_POPUPS = [] {
+    std::array<std::array<uint8_t, 80>, 8> arr{};
+    for (size_t i = 0; i < 8; ++i) {
+        arr[i] = ComposeFruitScorePopup(FRUIT_BCD[i]);
+    }
+    return arr;
+}();
+
 } // namespace pcman::data

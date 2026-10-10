@@ -123,6 +123,8 @@ public:
     }
 
     int GetMouthFrame() const { return m_mouthFrame; }
+    void SetClosedMouth(bool closed) { m_closedMouth = closed; }
+    bool IsClosedMouth() const { return m_closedMouth; }
 
     bool IsDying() const { return m_isDying; }
     void StartDying();
@@ -139,6 +141,7 @@ private:
 
     // Authentic initial mouth frame: 3 (half-open sprite at 0x1E09 / file offset 0x2E09 at 0x02F1 in v1.com)
     int m_mouthFrame = 3;
+    bool m_closedMouth = false;
 
     bool m_isDying = false;
     int m_deathFrame = 0;

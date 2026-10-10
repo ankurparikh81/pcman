@@ -23,6 +23,7 @@ void Pacman::Reset() {
     m_requestedDir = Direction::Up;
     m_isMoving = true;
     m_mouthFrame = 3; // Authentic initial sprite matching 0x02F1 (mov si, 0x1e09 / offset 0x2E09) in v1.com
+    m_closedMouth = false;
     m_isDying = false;
     m_deathFrame = 0;
     m_deathTick = 0;
@@ -115,7 +116,8 @@ void Pacman::Render(CgaRenderer& renderer) const {
     } else {
         int dirIdx = static_cast<int>(m_currentDir);
         if (dirIdx < 0 || dirIdx > 3) dirIdx = 0;
-        auto pacSprite = RomData::GetPacmanSprite(dirIdx, m_mouthFrame);
+        int frame = m_closedMouth ? 2 : m_mouthFrame; // Frame 2 is solid circle at 0x2DD1 in ROM
+        auto pacSprite = RomData::GetPacmanSprite(dirIdx, frame);
         renderer.BlitSpriteRaw(px, py, pacSprite.data(), true);
     }
 }
