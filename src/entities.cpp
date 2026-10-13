@@ -315,19 +315,20 @@ void Ghost::Update(const Maze& maze, int pacmanGridY, int pacmanGridX, const Lev
             m_footFrame ^= 1;
             break;
         } else if (m_flags == 2) {
-            // Exiting pen: move towards door position (pixel_x = 200, pixel_y = 93)
-            if (m_penPixelX < PEN_DOOR_PIXEL_X) {
-                m_penPixelX = std::min(m_penPixelX + 4, PEN_DOOR_PIXEL_X);
-                m_dir = Direction::Right;
-            } else if (m_penPixelX > PEN_DOOR_PIXEL_X) {
-                m_penPixelX = std::max(m_penPixelX - 4, PEN_DOOR_PIXEL_X);
-                m_dir = Direction::Left;
-            } else if (m_penPixelY < PEN_DOOR_PIXEL_Y) {
+            // Exiting pen: in Pcman v1.com (0x0974..0x09A6), ghost aligns vertically to door Y (93)
+            // FIRST, then travels horizontally Right to door X (200).
+            if (m_penPixelY < PEN_DOOR_PIXEL_Y) {
                 m_penPixelY = std::min(m_penPixelY + 4, PEN_DOOR_PIXEL_Y);
                 m_dir = Direction::Down;
             } else if (m_penPixelY > PEN_DOOR_PIXEL_Y) {
                 m_penPixelY = std::max(m_penPixelY - 4, PEN_DOOR_PIXEL_Y);
                 m_dir = Direction::Up;
+            } else if (m_penPixelX < PEN_DOOR_PIXEL_X) {
+                m_penPixelX = std::min(m_penPixelX + 4, PEN_DOOR_PIXEL_X);
+                m_dir = Direction::Right;
+            } else if (m_penPixelX > PEN_DOOR_PIXEL_X) {
+                m_penPixelX = std::max(m_penPixelX - 4, PEN_DOOR_PIXEL_X);
+                m_dir = Direction::Left;
             }
 
             if (m_penPixelX == PEN_DOOR_PIXEL_X && m_penPixelY == PEN_DOOR_PIXEL_Y) {
@@ -365,10 +366,24 @@ void Ghost::Update(const Maze& maze, int pacmanGridY, int pacmanGridX, const Lev
 
             // If eaten eyes reached door entrance (grid_y = 26, grid_x = 38):
             if (m_flags >= 6 && m_gridY == PEN_DOOR_GRID_Y && m_gridX == PEN_DOOR_GRID_X) {
-                m_flags = 4; // Back in pen bouncing
-                m_penPixelX = 172;
-                m_penPixelY = PEN_DOOR_PIXEL_Y;
+                // In Pcman v1.com (0x09F2..0x0A28):
+                // Eaten eyes reset to their specific pen lane at the left bounce boundary (X = 168):
+                //   Ghost 0 (Blinky): Y = 105 (offset 0x306A)
+                //   Ghost 1 (Pinky):  Y = 93  (offset 0x2E8A)
+                //   Ghost 2 (Inky):   Y = 93  (offset 0x2E8A)
+                //   Ghost 3 (Clyde):  Y = 81  (offset 0x2CAA)
+                m_penPixelX = PEN_BOUNCE_MIN_X;
+                m_penPixelY = GHOST_INIT_CONFIGS[static_cast<size_t>(m_type)].penPixelY;
                 m_dir = Direction::Right;
+
+                // In Pcman v1.com (0x0A18..0x0A20):
+                // Ghost 2 (Inky, cx == 0x0C) subtracts 2 twice: 6 -> 4 -> 2 (immediately begins exiting pen).
+                // Ghosts 0 (Blinky), 1 (Pinky), 3 (Clyde) subtract 2 once: 6 -> 4 (bounces in pen until pen release roll).
+                if (m_type == GhostType::Inky) {
+                    m_flags = 2; // Immediately exiting pen!
+                } else {
+                    m_flags = 4; // Inside pen bouncing
+                }
                 break;
             }
         }

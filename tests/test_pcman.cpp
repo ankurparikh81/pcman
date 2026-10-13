@@ -316,6 +316,53 @@ void TestGhostAI() {
     }
     assert(released);
     std::cout << "  - Verified in-pen ghost successfully released using Level 1 penThresh!\n";
+
+    // 5. Authentic Eaten Ghost Return to Starting Box (0x09F2..0x0A28 in Pcman v1.com):
+    // Test Inky returning to pen: arrives at door (26, 38) and IMMEDIATELY begins exiting pen!
+    Ghost eatenInky(GhostType::Inky);
+    eatenInky.SetGridPos(26, 37, Direction::Right);
+    eatenInky.Eat();
+    assert(eatenInky.IsEaten());
+    eatenInky.Update(maze, 25, 14, l1Cfg);
+    assert(eatenInky.IsExitingPen()); // Inky transitions directly to flags=2 (Exiting Pen)!
+    assert(!eatenInky.IsInPen());
+    assert(!eatenInky.IsEaten());
+    assert(eatenInky.GetPos().x == 168);
+    assert(eatenInky.GetPos().y == 93);
+    std::cout << "  - Verified Inky eaten return: directly transitions to Exiting Pen at (168, 93)!\n";
+
+    // Advance Inky exiting the pen: moves Right at 50% speed from (168, 93) to door (200, 93)
+    int exitTicks = 0;
+    while (eatenInky.IsExitingPen() && exitTicks++ < 30) {
+        eatenInky.Update(maze, 25, 14, l1Cfg);
+    }
+    assert(!eatenInky.IsExitingPen() && !eatenInky.IsInPen());
+    assert(eatenInky.GetGridY() == 25);
+    assert(eatenInky.GetGridX() == 38);
+    std::cout << "  - Verified Inky exited pen into maze at (gridY=25, gridX=38) in " << exitTicks << " ticks!\n";
+
+    // Test Blinky returning to pen: resets to bottom lane Y=105, X=168, flags=4 (In Pen)
+    Ghost eatenBlinky(GhostType::Blinky);
+    eatenBlinky.SetGridPos(26, 37, Direction::Right);
+    eatenBlinky.Eat();
+    eatenBlinky.Update(maze, 25, 14, l1Cfg);
+    assert(eatenBlinky.IsInPen());
+    assert(!eatenBlinky.IsExitingPen());
+    assert(eatenBlinky.GetPos().x == 168);
+    assert(eatenBlinky.GetPos().y == 105);
+    std::cout << "  - Verified Blinky eaten return: resets to pen bottom lane at (168, 105)!\n";
+
+    // Test Clyde returning to pen: resets to top lane Y=81, X=168, flags=4 (In Pen)
+    Ghost eatenClyde(GhostType::Clyde);
+    eatenClyde.SetGridPos(26, 37, Direction::Right);
+    eatenClyde.Eat();
+    eatenClyde.Update(maze, 25, 14, l1Cfg);
+    assert(eatenClyde.IsInPen());
+    assert(!eatenClyde.IsExitingPen());
+    assert(eatenClyde.GetPos().x == 168);
+    assert(eatenClyde.GetPos().y == 81);
+    std::cout << "  - Verified Clyde eaten return: resets to pen top lane at (168, 81)!\n";
+
     std::cout << "  -> All Ghost AI checks passed!\n";
 }
 
