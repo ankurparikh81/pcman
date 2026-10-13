@@ -158,22 +158,22 @@ void Ghost::Reset(int level) {
 }
 
 void Ghost::SetFrightened() {
-    if (m_flags == 0) {
-        m_flags |= 1; // Frightened blue
+    if (m_flags == GhostFlags::Active) {
+        m_flags |= GhostFlags::Frightened; // Frightened blue
         m_dir = Opposite(m_dir); // Immediate 180 reverse (0x060A in v1.com)
     }
 }
 
 void Ghost::ClearFrightened() {
-    m_flags &= 0xFE; // Clear bit 0 (0x0504 in v1.com)
+    m_flags &= ~GhostFlags::Frightened; // Clear bit 0 (0x0504 in v1.com)
 }
 
 void Ghost::Eat() {
-    m_flags = 6; // Set to eaten eyes returning to pen (0x0CC4 in v1.com)
+    m_flags = GhostFlags::EatenEyes; // Set to eaten eyes returning to pen (0x0CC4 in v1.com)
 }
 
 EntityPosition Ghost::GetPos() const {
-    if (m_flags == 4 || m_flags == 2) {
+    if (IsInPen() || IsExitingPen()) {
         return { m_penPixelX, m_penPixelY };
     }
     return { GridToPixelX(m_gridX), GridToPixelY(m_gridY) };
@@ -182,7 +182,7 @@ EntityPosition Ghost::GetPos() const {
 bool Ghost::CheckCollision(int pacmanGridY, int pacmanGridX) const {
     // In v1.com (0x0897..0x08D8):
     // cmp [bx+0x2a38], 2; jnl no_collision (eyes, pen, exiting cannot collide)
-    if (m_flags >= 2) return false;
+    if (m_flags >= GhostFlags::ExitingPen) return false;
 
     // Authentic Manhattan distance check (|dY| + |dX| <= 2)
     return CheckGridCollision(m_gridY, m_gridX, pacmanGridY, pacmanGridX);
@@ -198,9 +198,9 @@ Direction Ghost::ChooseDirection(const Maze& maze, int pacmanGridY, int pacmanGr
     int targetY = pacmanGridY;
     int targetX = pacmanGridX;
     int weight = ghostWeight;
-    bool isFrightened = (m_flags & 1) != 0;
+    bool isFrightened = IsFrightened();
 
-    if (m_flags >= 6) {
+    if (IsEaten()) {
         // Eaten eyes returning to pen entrance door at (grid_y = 26, grid_x = 38)
         weight = 0x3C; // Maximum pursuit weight (60)
         targetY = PEN_DOOR_GRID_Y;
@@ -293,10 +293,10 @@ void Ghost::Update(const Maze& maze, int pacmanGridY, int pacmanGridX, const Lev
     }
 
     // Eaten eyes move at 200% speed by taking two steps per tick (0x075E..0x0763)
-    int steps = (m_flags >= 6) ? 2 : 1;
+    int steps = IsEaten() ? 2 : 1;
 
     for (int step = 0; step < steps; ++step) {
-        if (m_flags == 4) {
+        if (IsInPen()) {
             // Inside pen bouncing horizontally (0x09AD..0x09EF)
             m_penPixelX += DeltaCol(m_dir) * 4;
 
@@ -305,8 +305,8 @@ void Ghost::Update(const Maze& maze, int pacmanGridY, int pacmanGridX, const Lev
                 m_dir = Direction::Right;
 
                 // Authentic pen release roll when turning from left boundary to Right (0x0AD2 in v1.com)
-                if ((m_flags & 1) == 0 && NextGlobalRandom() < levelCfg.penThresh) {
-                    m_flags = 2; // Transition to exiting pen
+                if (!IsFrightened() && NextGlobalRandom() < levelCfg.penThresh) {
+                    m_flags = GhostFlags::ExitingPen; // Transition to exiting pen
                 }
             } else if (m_penPixelX >= PEN_BOUNCE_MAX_X) {
                 m_penPixelX = PEN_BOUNCE_MAX_X;
@@ -314,7 +314,7 @@ void Ghost::Update(const Maze& maze, int pacmanGridY, int pacmanGridX, const Lev
             }
             m_footFrame ^= 1;
             break;
-        } else if (m_flags == 2) {
+        } else if (IsExitingPen()) {
             // Exiting pen: in Pcman v1.com (0x0974..0x09A6), ghost aligns vertically to door Y (93)
             // FIRST, then travels horizontally Right to door X (200).
             if (m_penPixelY < PEN_DOOR_PIXEL_Y) {
@@ -333,7 +333,7 @@ void Ghost::Update(const Maze& maze, int pacmanGridY, int pacmanGridX, const Lev
 
             if (m_penPixelX == PEN_DOOR_PIXEL_X && m_penPixelY == PEN_DOOR_PIXEL_Y) {
                 // Ghost passed through door into maze!
-                m_flags = 0;
+                m_flags = GhostFlags::Active;
                 m_gridY = 25;
                 m_gridX = PEN_DOOR_GRID_X;
                 m_dir = (NextGlobalRandom() & 1) ? Direction::Up : Direction::Down;
@@ -365,7 +365,7 @@ void Ghost::Update(const Maze& maze, int pacmanGridY, int pacmanGridX, const Lev
             m_gridY = WrapTunnelGridY(m_gridY);
 
             // If eaten eyes reached door entrance (grid_y = 26, grid_x = 38):
-            if (m_flags >= 6 && m_gridY == PEN_DOOR_GRID_Y && m_gridX == PEN_DOOR_GRID_X) {
+            if (IsEaten() && m_gridY == PEN_DOOR_GRID_Y && m_gridX == PEN_DOOR_GRID_X) {
                 // In Pcman v1.com (0x09F2..0x0A28):
                 // Eaten eyes reset to their specific pen lane at the left bounce boundary (X = 168):
                 //   Ghost 0 (Blinky): Y = 105 (offset 0x306A)
@@ -380,9 +380,9 @@ void Ghost::Update(const Maze& maze, int pacmanGridY, int pacmanGridX, const Lev
                 // Ghost 2 (Inky, cx == 0x0C) subtracts 2 twice: 6 -> 4 -> 2 (immediately begins exiting pen).
                 // Ghosts 0 (Blinky), 1 (Pinky), 3 (Clyde) subtract 2 once: 6 -> 4 (bounces in pen until pen release roll).
                 if (m_type == GhostType::Inky) {
-                    m_flags = 2; // Immediately exiting pen!
+                    m_flags = GhostFlags::ExitingPen; // Immediately exiting pen!
                 } else {
-                    m_flags = 4; // Inside pen bouncing
+                    m_flags = GhostFlags::InPen;      // Inside pen bouncing
                 }
                 break;
             }
@@ -398,7 +398,7 @@ void Ghost::Update(const Maze& maze, int pacmanGridY, int pacmanGridX, const Lev
                 m_speedSkip = 0; // normal speed in middle corridor
             }
         }
-        if (m_flags > 0 && m_flags < 6) {
+        if (m_flags > GhostFlags::Active && m_flags < GhostFlags::EatenEyes) {
             m_speedSkip = 2; // 50% speed for in-pen (flags 4), exiting (flags 2), and frightened (flags 1)!
         }
     }
@@ -406,16 +406,16 @@ void Ghost::Update(const Maze& maze, int pacmanGridY, int pacmanGridX, const Lev
 
 void Ghost::Render(CgaRenderer& renderer, bool flashWhite) const {
     int variation = 0;
-    if (m_flags >= 6) {
+    if (IsEaten()) {
         variation = 6; // Eaten eyes
-    } else if ((m_flags & 1) != 0) {
+    } else if (IsFrightened()) {
         variation = flashWhite ? 5 : 4; // Frightened blue or flashing white
     } else {
         variation = static_cast<int>(m_type); // 0=Blinky, 1=Pinky, 2=Inky, 3=Clyde
     }
 
-    int px = (m_flags == 4 || m_flags == 2) ? m_penPixelX : GridToPixelX(m_gridX);
-    int py = (m_flags == 4 || m_flags == 2) ? m_penPixelY : GridToPixelY(m_gridY);
+    int px = (IsInPen() || IsExitingPen()) ? m_penPixelX : GridToPixelX(m_gridX);
+    int py = (IsInPen() || IsExitingPen()) ? m_penPixelY : GridToPixelY(m_gridY);
 
     int dirIdx = static_cast<int>(m_dir);
     if (dirIdx < 0 || dirIdx > 3) dirIdx = 0;

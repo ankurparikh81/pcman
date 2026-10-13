@@ -48,7 +48,8 @@ static_assert(CheckGridCollision(25, 38, 24, 37));                      // dist 
 static_assert(!CheckGridCollision(25, 38, 23, 37));                     // dist 3 -> no collision
 static_assert(WrapTunnelGridY(-1) == 57 && WrapTunnelGridY(58) == 0 && WrapTunnelGridY(25) == 25);
 static_assert(GHOST_INIT_CONFIGS[static_cast<size_t>(GhostType::Blinky)].penPixelX == 180);
-static_assert(GHOST_INIT_CONFIGS[static_cast<size_t>(GhostType::Inky)].flags == 0);
+static_assert(GHOST_INIT_CONFIGS[static_cast<size_t>(GhostType::Inky)].flags == GhostFlags::Active);
+static_assert(GHOST_INIT_CONFIGS[static_cast<size_t>(GhostType::Blinky)].flags == GhostFlags::InPen);
 static_assert(GhostComboScore(1) == 200 && GhostComboScore(2) == 400 && GhostComboScore(4) == 1600);
 static_assert(GhostComboScore(5) == 1600);                              // capped combo
 static_assert(CheckTouchBox(152, 93, 152, 93, 8) && !CheckTouchBox(152, 93, 161, 93, 8));

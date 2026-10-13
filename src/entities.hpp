@@ -78,8 +78,19 @@ enum class GhostType {
     Clyde = 3   // Orange / Feigning
 };
 
+// Authentic Ghost state flags matching byte at [bx+0x2a38] in Pcman v1.com:
+// Bit 0 is the frightened bit (1).
+// Base state values: 0 (Active), 2 (ExitingPen), 4 (InPen), 6 (EatenEyes).
+namespace GhostFlags {
+    inline constexpr uint8_t Active     = 0; // Normal active in maze
+    inline constexpr uint8_t Frightened = 1; // Bit 0: Frightened blue / flashing
+    inline constexpr uint8_t ExitingPen = 2; // Moving through pen towards door
+    inline constexpr uint8_t InPen      = 4; // Bouncing inside pen
+    inline constexpr uint8_t EatenEyes  = 6; // Eaten eyes returning to pen entrance
+}
+
 struct GhostInitConfig {
-    uint8_t flags = 0;
+    uint8_t flags = GhostFlags::Active;
     int penPixelX = 0;
     int penPixelY = 0;
     int gridY = 0;
@@ -89,10 +100,10 @@ struct GhostInitConfig {
 
 // Initial entity states from ROM template table at DS:0x0725
 inline constexpr std::array<GhostInitConfig, 4> GHOST_INIT_CONFIGS = {{
-    { 4, 180, 105, 26, 38, Direction::Left  }, // Ghost 0 (Blinky): inside pen
-    { 4, 172,  93, 26, 38, Direction::Right }, // Ghost 1 (Pinky): inside pen
-    { 0, 200,  93, 25, 38, Direction::Up    }, // Ghost 2 (Inky): outside pen
-    { 4, 180,  81, 26, 38, Direction::Left  }  // Ghost 3 (Clyde): inside pen
+    { GhostFlags::InPen,  180, 105, 26, 38, Direction::Left  }, // Ghost 0 (Blinky): inside pen
+    { GhostFlags::InPen,  172,  93, 26, 38, Direction::Right }, // Ghost 1 (Pinky): inside pen
+    { GhostFlags::Active, 200,  93, 25, 38, Direction::Up    }, // Ghost 2 (Inky): outside pen
+    { GhostFlags::InPen,  180,  81, 26, 38, Direction::Left  }  // Ghost 3 (Clyde): inside pen
 }};
 
 struct EntityPosition {
@@ -158,10 +169,10 @@ public:
 
     void SetFrightened();
     void ClearFrightened();
-    bool IsFrightened() const { return (m_flags & 1) != 0; }
-    bool IsEaten() const { return m_flags >= 6; }
-    bool IsInPen() const { return m_flags == 4; }
-    bool IsExitingPen() const { return m_flags == 2; }
+    bool IsFrightened() const { return (m_flags & GhostFlags::Frightened) != 0; }
+    bool IsEaten() const { return m_flags >= GhostFlags::EatenEyes; }
+    bool IsInPen() const { return m_flags == GhostFlags::InPen; }
+    bool IsExitingPen() const { return m_flags == GhostFlags::ExitingPen; }
     void Eat();
 
     EntityPosition GetPos() const;
@@ -172,7 +183,7 @@ public:
         m_gridY = gridY;
         m_gridX = gridX;
         m_dir = dir;
-        m_flags = 0;
+        m_flags = GhostFlags::Active;
     }
 
     // Manhattan distance collision check matching 0x089E..0x08B6 (|dY| + |dX| <= 2)
@@ -181,9 +192,8 @@ public:
 private:
     GhostType m_type;
 
-    // Authentic flags matching 0x2A38:
-    // 0 = Normal active, 1 = Frightened, 2 = Exiting pen, 4 = In pen, 6 = Eaten eyes
-    uint8_t m_flags = 0;
+    // Authentic flags matching 0x2A38 (GhostFlags::Active, Frightened, ExitingPen, InPen, EatenEyes)
+    uint8_t m_flags = GhostFlags::Active;
 
     int m_gridY = 26;
     int m_gridX = 38;
