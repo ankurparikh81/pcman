@@ -34,10 +34,28 @@ SRCS = src/main.cpp \
 
 OBJS = $(SRCS:.cpp=.o)
 
+# WebAssembly / Emscripten configuration
+EMSDK ?= $(HOME)/emsdk
+EMCC ?= $(shell which emcc 2>/dev/null || echo $(EMSDK)/upstream/emscripten/emcc)
+EMCXX ?= $(shell which em++ 2>/dev/null || echo $(EMSDK)/upstream/emscripten/em++)
+RAYLIB_WASM ?= $(HOME)/raylib-wasm
+WEB_OUT_DIR = build-web
+WEB_TARGET = $(WEB_OUT_DIR)/index.html
+WEB_FLAGS = -std=c++20 -Wall -Wextra -O2 -Isrc -I$(RAYLIB_WASM)/src -DPLATFORM_WEB \
+            -s USE_GLFW=3 -s TOTAL_STACK=64MB \
+            --shell-file web/shell.html
+
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
 	$(CXX) $(OBJS) -o $(TARGET) $(LDFLAGS)
+
+web: $(WEB_TARGET)
+
+$(WEB_TARGET): $(SRCS) web/shell.html
+	@mkdir -p $(WEB_OUT_DIR)
+	$(EMCXX) $(WEB_FLAGS) $(SRCS) $(RAYLIB_WASM)/src/libraylib.a -o $(WEB_TARGET)
+	@echo "WebAssembly build complete: $(WEB_TARGET)"
 
 test: $(TARGET)
 	$(CXX) $(CXXFLAGS) tests/test_pcman.cpp src/maze.cpp src/cga_renderer.cpp src/entities.cpp src/pc_speaker.cpp src/game.cpp -o tests/test_pcman $(LDFLAGS)
@@ -49,7 +67,11 @@ test: $(TARGET)
 clean:
 	rm -f $(OBJS) $(TARGET) tests/test_pcman pcman.exe
 
+clean-web:
+	rm -rf $(WEB_OUT_DIR) build-cmake-web
+
 compdb compile_commands.json:
 	@python3 scripts/gen_compdb.py
 
-.PHONY: all clean test compdb compile_commands.json
+.PHONY: all clean clean-web test web compdb compile_commands.json
+

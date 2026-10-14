@@ -1,0 +1,57 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Emscripten SDK
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+
+      - name: Cache Raylib WASM build
+        id: cache-raylib
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/raylib-wasm
+          key: raylib-wasm-5.0
+
+      - name: Build Raylib for Web
+        if: steps.cache-raylib.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch 5.0 https://github.com/raysan5/raylib.git ${{ runner.temp }}/raylib-wasm
+          cd ${{ runner.temp }}/raylib-wasm/src
+          make PLATFORM=PLATFORM_WEB -j$(nproc)
+
+      - name: Build PC-Man WebAssembly
+        run: |
+          make web RAYLIB_WASM=${{ runner.temp }}/raylib-wasm
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build-web
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

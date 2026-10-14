@@ -1,6 +1,9 @@
 # PC-Man (1982) — C++20 / Raylib Recreation
 
+[![Play in Browser](https://img.shields.io/badge/Play%20Online-WebAssembly%20%2F%20HTML5-brightgreen?style=for-the-badge&logo=webassembly)](https://ankurparikh81.github.io/pcman/)
+
 A faithful, cycle-accurate, zero-dependency C++20 recreation of the classic 1982 IBM PC DOS game **PC-Man (v1.0)** by Greg Kuperberg (Orion Software), powered by [raylib](https://www.raylib.com/).
+
 
 Every visual element, audio note, collision rule, entity movement mechanic, and ghost AI behavior was reverse-engineered from the original 16,448-byte `Pcman v1.com` 8086 disassembly and preserved with 100% authenticity.
 
@@ -70,7 +73,7 @@ The game supports multiple simultaneous control schemes:
 ```
 pcman/
 ├── src/
-│   ├── main.cpp            # Entry point & window lifecycle
+│   ├── main.cpp            # Entry point & window lifecycle (Native + WebAssembly)
 │   ├── game.hpp / .cpp     # Game loop, states, timing, collision & HUD
 │   ├── game_data.hpp       # Reverse-engineered typed constexpr ROM tables
 │   ├── rom_data.hpp        # ROM accessors & LevelConfig structures
@@ -81,8 +84,10 @@ pcman/
 │   └── font_data.inl       # IBM PC BIOS 8x8 font bitmap data
 ├── tests/
 │   └── test_pcman.cpp      # Automated unit test suite (8 test suites)
-├── Makefile                # Cross-platform Makefile (macOS, Linux, MinGW)
-├── CMakeLists.txt          # Modern CMake build configuration
+├── web/
+│   └── shell.html          # Custom HTML5/WebGL shell template for WebAssembly
+├── Makefile                # Cross-platform Makefile (macOS, Linux, MinGW, WebAssembly)
+├── CMakeLists.txt          # Modern CMake build configuration (Native + Emscripten)
 └── README.md               # Project documentation
 ```
 
@@ -101,6 +106,7 @@ pcman/
   * **Ubuntu/Debian**: `sudo apt install libraylib-dev`
   * **Arch Linux**: `sudo pacman -S raylib`
   * **Fedora**: `sudo dnf install raylib-devel`
+* *(Optional for WebAssembly)*: **[Emscripten SDK](https://emscripten.org/)** (`emsdk`)
 
 ---
 
@@ -128,7 +134,28 @@ make clean
 
 ---
 
-### Using `cmake`
+### Building for WebAssembly (HTML5 / WebGL)
+
+Compile into static WebAssembly/HTML5 artifacts (`index.html`, `index.js`, `index.wasm`):
+
+```bash
+# Using Makefile
+make web
+
+# Run a local web server to test
+python3 -m http.server 8080 --directory build-web
+```
+Then navigate to `http://localhost:8080` in your web browser.
+
+Alternatively, using CMake with Emscripten:
+```bash
+emcmake cmake -B build-web -S .
+cmake --build build-web
+```
+
+---
+
+### Using `cmake` (Native)
 
 ```bash
 mkdir build && cd build
@@ -136,6 +163,7 @@ cmake ..
 cmake --build .
 ./pcman
 ```
+
 
 ---
 
