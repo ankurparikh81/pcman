@@ -626,6 +626,86 @@ void TestLevelTransition() {
     std::cout << "  -> All Level Transition checks passed!\n";
 }
 
+void TestPcSpeakerSynth() {
+    std::cout << "[Test] Validating Headless PC Speaker 8253 PIT Synthesizer...\n";
+    PcSpeaker speaker;
+
+    // 1. Title tune progression (137 notes at 18.2Hz)
+    speaker.PlayTitleTune();
+    assert(speaker.IsTitleTunePlaying());
+    assert(!speaker.IsTitleTuneDone());
+    speaker.Tick18Hz(); // Note 0: divisor 852 -> ~1400.45 Hz
+    assert(speaker.GetFrequency() > 1400.0f && speaker.GetFrequency() < 1401.0f);
+
+    for (int i = 1; i <= 137; ++i) {
+        speaker.Tick18Hz();
+    }
+    assert(speaker.IsTitleTuneDone());
+    assert(speaker.GetFrequency() == 0.0f);
+
+    // 2. Square wave sample generation and Ghost Eaten 24-note arpeggio
+    speaker.TriggerGhostEatenSound();
+    std::array<int16_t, 1024> samples{};
+    speaker.FillAudioBuffer(samples.data(), static_cast<unsigned int>(samples.size()));
+    bool hasPositive = false;
+    bool hasNegative = false;
+    for (int16_t s : samples) {
+        if (s > 0) hasPositive = true;
+        if (s < 0) hasNegative = true;
+    }
+    assert(hasPositive && hasNegative);
+
+    // 3. Mute behavior
+    speaker.SetMuted(true);
+    assert(speaker.IsMuted());
+    speaker.FillAudioBuffer(samples.data(), static_cast<unsigned int>(samples.size()));
+    for (int16_t s : samples) {
+        assert(s == 0);
+    }
+
+    std::cout << "  - Verified headless 18.2Hz title tune sequence, ghost arpeggio synthesis, and mute gating!\n";
+    std::cout << "  -> All PC Speaker Synthesizer checks passed!\n";
+}
+
+void TestGameStateMachine() {
+    std::cout << "[Test] Validating Deterministic Game State Machine & Headless Scene Render...\n";
+    Game game;
+    game.GetSpeaker().PlayTitleTune();
+    assert(game.GetState() == GameState::TitleScreen);
+    assert(!game.GetSpeaker().IsTitleTuneDone());
+
+    // 1st start press while title tune is playing skips the tune
+    InputState pressStart{};
+    pressStart.startPressed = true;
+    game.Update(0.016f, pressStart);
+    assert(game.GetState() == GameState::TitleScreen);
+    assert(game.GetSpeaker().IsTitleTuneDone());
+
+    // 2nd start press transitions from TitleScreen -> Ready
+    game.Update(0.016f, pressStart);
+    assert(game.GetState() == GameState::Ready);
+
+    // Advance Ready timer (~1.63s) -> transitions to Playing
+    InputState noInput{};
+    game.Update(2.0f, noInput);
+    assert(game.GetState() == GameState::Playing);
+
+    // Render scene into software framebuffer headlessly and verify HUD/maze pixels exist
+    game.RenderFrame();
+    int nonBlackPixels = 0;
+    for (int y = 0; y < CGA_HEIGHT; ++y) {
+        for (int x = 0; x < CGA_WIDTH; ++x) {
+            if (game.GetRenderer().GetPixel(x, y) != 0) {
+                nonBlackPixels++;
+            }
+        }
+    }
+    assert(nonBlackPixels > 1000);
+
+    std::cout << "  - Verified TitleScreen -> Ready -> Playing transitions and headless scene rendering!\n";
+    std::cout << "  -> All Game State Machine checks passed!\n";
+}
+
 int main() {
     std::cout << "=== Running PC-Man Unit Tests ===\n";
     TestRomData();
@@ -639,6 +719,8 @@ int main() {
     TestCgaFontRendering();
     TestScorePopups();
     TestLevelTransition();
+    TestPcSpeakerSynth();
+    TestGameStateMachine();
     std::cout << "=== All Unit Tests Passed Successfully! ===\n";
     return 0;
 }

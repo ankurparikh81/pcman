@@ -58,7 +58,7 @@ void Pacman::Update(const Maze& maze) {
     // In Pcman v1.com (0x0576..0x0657):
     // Movement evaluates turns strictly when coordinates are on grid nodes (both even):
     // test byte [0x2A31], 1 == 0 && test byte [0x2A30], 1 == 0
-    bool atIntersection = ((m_gridY & 1) == 0) && ((m_gridX & 1) == 0);
+    bool atIntersection = IsAtGridIntersection(m_gridY, m_gridX);
 
     if (atIntersection) {
         int curRow = m_gridY / 2;
@@ -106,22 +106,6 @@ void Pacman::Update(const Maze& maze) {
     }
 }
 
-void Pacman::Render(CgaRenderer& renderer) const {
-    int px = GridToPixelX(m_gridX);
-    int py = GridToPixelY(m_gridY);
-
-    if (m_isDying) {
-        auto deathSprite = RomData::GetDeathSprite(m_deathFrame);
-        renderer.BlitSpriteRaw(px, py, deathSprite.data(), true);
-    } else {
-        int dirIdx = static_cast<int>(m_currentDir);
-        if (dirIdx < 0 || dirIdx > 3) dirIdx = 0;
-        int frame = m_closedMouth ? 2 : m_mouthFrame; // Frame 2 is solid circle at 0x2DD1 in ROM
-        auto pacSprite = RomData::GetPacmanSprite(dirIdx, frame);
-        renderer.BlitSpriteRaw(px, py, pacSprite.data(), true);
-    }
-}
-
 // =========================================================================
 // GHOST IMPLEMENTATION (Authentic Pcman v1.com AI Algorithm)
 // =========================================================================
@@ -132,15 +116,18 @@ Ghost::Ghost(GhostType type) : m_type(type) {
 
 // Authentic 16-bit Linear Congruential PRNG verbatim from routine 0x0C01 at DS:0x2D24 in v1.com:
 // seed = (seed * 0x98DD + 0xD5EF) & 0xFFFF
-static uint16_t s_globalRngSeed = 0x0000;
+static LcgRng s_globalRng{0x0000};
+
+LcgRng& GlobalRandom() {
+    return s_globalRng;
+}
 
 uint16_t NextGlobalRandom() {
-    s_globalRngSeed = LcgStep(s_globalRngSeed);
-    return s_globalRngSeed;
+    return s_globalRng.Next();
 }
 
 void ResetGlobalRandom(uint16_t seed) {
-    s_globalRngSeed = seed;
+    s_globalRng.Reset(seed);
 }
 
 void Ghost::Reset(int level) {
@@ -189,7 +176,7 @@ bool Ghost::CheckCollision(int pacmanGridY, int pacmanGridX) const {
 }
 
 // Exact translation of the 8086 Ghost AI decision function at 0x095A..0x0AFF in Pcman v1.com
-Direction Ghost::ChooseDirection(const Maze& maze, int pacmanGridY, int pacmanGridX, uint8_t ghostWeight) {
+Direction Ghost::ChooseDirection(const Maze& maze, int pacmanGridY, int pacmanGridX, uint8_t ghostWeight, LcgRng& rng) {
     // 1. Initialize weights for all 4 directions to 1:
     // Index 0 = Up, 1 = Down, 2 = Left, 3 = Right
     std::array<int, 4> weights = {1, 1, 1, 1};
@@ -247,7 +234,7 @@ Direction Ghost::ChooseDirection(const Maze& maze, int pacmanGridY, int pacmanGr
     if (curDirIdx >= 0 && curDirIdx < 4) {
         // Double weight of continuing straight UNLESS speedSkip == 1
         // OR in vertical tunnel (gridX == 32 && (curDir == Up || curDir == Down)):
-        bool inVerticalTunnel = (m_gridX == 32) && (m_dir == Direction::Up || m_dir == Direction::Down);
+        bool inVerticalTunnel = (m_gridX == TUNNEL_GRID_X) && (m_dir == Direction::Up || m_dir == Direction::Down);
         if (m_speedSkip != 1 && !inVerticalTunnel) {
             weights[curDirIdx] *= 2;
         }
@@ -271,7 +258,7 @@ Direction Ghost::ChooseDirection(const Maze& maze, int pacmanGridY, int pacmanGr
         return m_dir;
     }
 
-    uint16_t rnd = NextGlobalRandom();
+    uint16_t rnd = rng.Next();
     int threshold = static_cast<int>((static_cast<uint32_t>(rnd) * static_cast<uint32_t>(sum)) >> 16);
 
     for (int d = 0; d < 4; ++d) {
@@ -284,7 +271,7 @@ Direction Ghost::ChooseDirection(const Maze& maze, int pacmanGridY, int pacmanGr
     return Direction::Right;
 }
 
-void Ghost::Update(const Maze& maze, int pacmanGridY, int pacmanGridX, const LevelConfig& levelCfg) {
+void Ghost::Update(const Maze& maze, int pacmanGridY, int pacmanGridX, const LevelConfig& levelCfg, LcgRng& rng) {
     // Authentic speed/skip counter from 0x07B2..0x07BE & 0x0896..0x08C4 in Pcman v1.com:
     // When m_speedSkip >= 2 (tunnel or frightened mode), skip this tick and decrement
     if (m_speedSkip >= 2) {
@@ -305,7 +292,7 @@ void Ghost::Update(const Maze& maze, int pacmanGridY, int pacmanGridX, const Lev
                 m_dir = Direction::Right;
 
                 // Authentic pen release roll when turning from left boundary to Right (0x0AD2 in v1.com)
-                if (!IsFrightened() && NextGlobalRandom() < levelCfg.penThresh) {
+                if (!IsFrightened() && rng.Next() < levelCfg.penThresh) {
                     m_flags = GhostFlags::ExitingPen; // Transition to exiting pen
                 }
             } else if (m_penPixelX >= PEN_BOUNCE_MAX_X) {
@@ -336,15 +323,14 @@ void Ghost::Update(const Maze& maze, int pacmanGridY, int pacmanGridX, const Lev
                 m_flags = GhostFlags::Active;
                 m_gridY = 25;
                 m_gridX = PEN_DOOR_GRID_X;
-                m_dir = (NextGlobalRandom() & 1) ? Direction::Up : Direction::Down;
+                m_dir = (rng.Next() & 1) ? Direction::Up : Direction::Down;
             }
             m_footFrame ^= 1;
             break;
         } else {
             // Active in maze (Normal, Frightened, or Eaten Eyes)
-            bool atIntersection = ((m_gridY & 1) == 0) && ((m_gridX & 1) == 0);
-            if (atIntersection) {
-                Direction newDir = ChooseDirection(maze, pacmanGridY, pacmanGridX, levelCfg.ghostWeight);
+            if (IsAtGridIntersection(m_gridY, m_gridX)) {
+                Direction newDir = ChooseDirection(maze, pacmanGridY, pacmanGridX, levelCfg.ghostWeight, rng);
                 if (newDir != m_dir) {
                     // Authentic corner turn pause matching 0x07FA..0x080A in v1.com:
                     // Ghost pauses for 1 tick facing old direction before turning!
@@ -392,7 +378,7 @@ void Ghost::Update(const Maze& maze, int pacmanGridY, int pacmanGridX, const Lev
     // Authentic post-movement speed flags for next tick (0x0896..0x08C4 in v1.com):
     // Evaluated for ALL ghost states (in-pen, exiting-pen, frightened, tunnel)
     if (m_speedSkip != 1) {
-        if (m_gridX == 32) {
+        if (m_gridX == TUNNEL_GRID_X) {
             m_speedSkip = 2; // 50% speed in tunnel
             if (m_gridY >= 12 && m_gridY <= 38) {
                 m_speedSkip = 0; // normal speed in middle corridor
@@ -404,24 +390,14 @@ void Ghost::Update(const Maze& maze, int pacmanGridY, int pacmanGridX, const Lev
     }
 }
 
-void Ghost::Render(CgaRenderer& renderer, bool flashWhite) const {
-    int variation = 0;
+int Ghost::GetSpriteVariation(bool flashWhite) const {
     if (IsEaten()) {
-        variation = 6; // Eaten eyes
-    } else if (IsFrightened()) {
-        variation = flashWhite ? 5 : 4; // Frightened blue or flashing white
-    } else {
-        variation = static_cast<int>(m_type); // 0=Blinky, 1=Pinky, 2=Inky, 3=Clyde
+        return 6; // Eaten eyes
     }
-
-    int px = (IsInPen() || IsExitingPen()) ? m_penPixelX : GridToPixelX(m_gridX);
-    int py = (IsInPen() || IsExitingPen()) ? m_penPixelY : GridToPixelY(m_gridY);
-
-    int dirIdx = static_cast<int>(m_dir);
-    if (dirIdx < 0 || dirIdx > 3) dirIdx = 0;
-
-    auto sprite = RomData::GetGhostSprite(variation, dirIdx, m_footFrame);
-    renderer.BlitSpriteRaw(px, py, sprite.data(), true);
+    if (IsFrightened()) {
+        return flashWhite ? 5 : 4; // Frightened blue or flashing white
+    }
+    return static_cast<int>(m_type); // 0=Blinky, 1=Pinky, 2=Inky, 3=Clyde
 }
 
 } // namespace pcman

@@ -1,8 +1,12 @@
 #include "cga_renderer.hpp"
+#include <raylib.h>
 #include <algorithm>
 #include <cstring>
 
 namespace pcman {
+
+static_assert(sizeof(CgaRgba) == sizeof(Color) && alignof(CgaRgba) == alignof(Color),
+              "CgaRgba must be layout-compatible with Raylib Color");
 
 // Authentic IBM PC CGA Mode 4 / ROM BIOS 8x8 font (Code Page 437)
 namespace {
@@ -28,7 +32,7 @@ namespace {
 
 CgaRenderer::CgaRenderer() {
     m_cgaBuffer.assign(CGA_WIDTH * CGA_HEIGHT, 0);
-    m_pixelBuffer.assign(CGA_WIDTH * CGA_HEIGHT, BLACK);
+    m_pixelBuffer.assign(CGA_WIDTH * CGA_HEIGHT, CGA_COLOR_BLACK);
 }
 
 CgaRenderer::~CgaRenderer() {
@@ -39,18 +43,24 @@ void CgaRenderer::Init() {
     if (m_initialized) return;
 
     Image img = GenImageColor(CGA_WIDTH, CGA_HEIGHT, BLACK);
-    m_screenTexture = LoadTextureFromImage(img);
-    SetTextureFilter(m_screenTexture, TEXTURE_FILTER_POINT);
+    Texture2D tex = LoadTextureFromImage(img);
+    SetTextureFilter(tex, TEXTURE_FILTER_POINT);
     UnloadImage(img);
 
+    m_textureId = tex.id;
+    m_textureMipmaps = tex.mipmaps;
+    m_textureFormat = tex.format;
+
     m_cgaBuffer.assign(CGA_WIDTH * CGA_HEIGHT, 0);
-    m_pixelBuffer.assign(CGA_WIDTH * CGA_HEIGHT, BLACK);
+    m_pixelBuffer.assign(CGA_WIDTH * CGA_HEIGHT, CGA_COLOR_BLACK);
     m_initialized = true;
 }
 
 void CgaRenderer::Close() {
     if (m_initialized) {
-        UnloadTexture(m_screenTexture);
+        Texture2D tex{ m_textureId, CGA_WIDTH, CGA_HEIGHT, m_textureMipmaps, m_textureFormat };
+        UnloadTexture(tex);
+        m_textureId = 0;
         m_initialized = false;
     }
 }
@@ -231,11 +241,15 @@ void CgaRenderer::UpdateTextureFromBuffer() {
     for (size_t i = 0; i < m_cgaBuffer.size(); ++i) {
         m_pixelBuffer[i] = CgaColor(m_cgaBuffer[i], m_flash);
     }
-    UpdateTexture(m_screenTexture, m_pixelBuffer.data());
+    if (m_initialized) {
+        Texture2D tex{ m_textureId, CGA_WIDTH, CGA_HEIGHT, m_textureMipmaps, m_textureFormat };
+        UpdateTexture(tex, m_pixelBuffer.data());
+    }
 }
 
 void CgaRenderer::Present(int windowWidth, int windowHeight) {
     UpdateTextureFromBuffer();
+    if (!m_initialized) return;
 
     constexpr float targetAspect = 4.0f / 3.0f;
     float winWidth = static_cast<float>(windowWidth);
@@ -259,9 +273,10 @@ void CgaRenderer::Present(int windowWidth, int windowHeight) {
 
     ClearBackground(BLACK);
 
+    Texture2D tex{ m_textureId, CGA_WIDTH, CGA_HEIGHT, m_textureMipmaps, m_textureFormat };
     Rectangle srcRect{ 0.0f, 0.0f, static_cast<float>(CGA_WIDTH), static_cast<float>(CGA_HEIGHT) };
     Rectangle destRect{ destX, destY, destWidth, destHeight };
-    DrawTexturePro(m_screenTexture, srcRect, destRect, Vector2{ 0.0f, 0.0f }, 0.0f, WHITE);
+    DrawTexturePro(tex, srcRect, destRect, Vector2{ 0.0f, 0.0f }, 0.0f, WHITE);
 }
 
 } // namespace pcman

@@ -1,5 +1,4 @@
 #pragma once
-#include "cga_renderer.hpp"
 #include "maze.hpp"
 #include "rom_data.hpp"
 #include <array>
@@ -42,6 +41,11 @@ constexpr int DeltaCol(Direction d) {
 constexpr int GridToPixelX(int gridX) { return 48 + gridX * 4; }
 constexpr int GridToPixelY(int gridY) { return -7 + gridY * 4; }
 
+// In Pcman v1.com, turns and dot checks happen strictly on even grid nodes
+constexpr bool IsAtGridIntersection(int gridY, int gridX) {
+    return ((gridY & 1) == 0) && ((gridX & 1) == 0);
+}
+
 // Manhattan distance between two grid points
 constexpr int ManhattanDist(int y1, int x1, int y2, int x2) {
     int dy = y1 - y2;
@@ -56,12 +60,45 @@ constexpr bool CheckGridCollision(int y1, int x1, int y2, int x2) {
 
 // Authentic vertical wrap-around tunnel (rows 0..57 in grid units, matching 0x0770..0x0795 & 0x0870..0x0896)
 inline constexpr int TUNNEL_GRID_ROWS = 58;
+inline constexpr int TUNNEL_GRID_X    = 32;
 
 constexpr int WrapTunnelGridY(int gridY) {
     if (gridY < 0) return gridY + TUNNEL_GRID_ROWS;
     if (gridY >= TUNNEL_GRID_ROWS) return gridY - TUNNEL_GRID_ROWS;
     return gridY;
 }
+
+// Authentic 16-bit LCG step verbatim from routine 0x0C01 in Pcman v1.com:
+// seed = (seed * 0x98DD + 0xD5EF) & 0xFFFF
+// Computed in uint32_t: uint16_t would promote to int, and seed * 0x98DD overflows int for large seeds.
+constexpr uint16_t LcgStep(uint16_t seed) {
+    return static_cast<uint16_t>(static_cast<uint32_t>(seed) * 0x98DDu + 0xD5EFu);
+}
+
+// Encapsulated 16-bit Linear Congruential PRNG matching DS:0x2D24 in Pcman v1.com
+class LcgRng {
+public:
+    constexpr explicit LcgRng(uint16_t seed = 0) : m_seed(seed) {}
+
+    constexpr uint16_t Next() {
+        m_seed = LcgStep(m_seed);
+        return m_seed;
+    }
+
+    constexpr void Reset(uint16_t seed = 0) {
+        m_seed = seed;
+    }
+
+    [[nodiscard]] constexpr uint16_t GetSeed() const { return m_seed; }
+
+private:
+    uint16_t m_seed = 0;
+};
+
+// Authentic shared global 16-bit PRNG at DS:0x2D24 in Pcman v1.com (0x0C01..0x0C0C)
+LcgRng& GlobalRandom();
+uint16_t NextGlobalRandom();
+void ResetGlobalRandom(uint16_t seed = 0);
 
 // Authentic Ghost pen coordinates & boundaries from ROM template 0x0725 & AI routine 0x09AD..0x09EF
 inline constexpr int PEN_DOOR_GRID_Y  = 26;
@@ -118,7 +155,6 @@ public:
     void Reset();
     void SetRequestedDirection(Direction dir);
     void Update(const Maze& maze);
-    void Render(CgaRenderer& renderer) const;
 
     EntityPosition GetPos() const {
         return { GridToPixelX(m_gridX), GridToPixelY(m_gridY) };
@@ -134,6 +170,7 @@ public:
     }
 
     int GetMouthFrame() const { return m_mouthFrame; }
+    int GetActiveMouthFrame() const { return m_closedMouth ? 2 : m_mouthFrame; }
     void SetClosedMouth(bool closed) { m_closedMouth = closed; }
     bool IsClosedMouth() const { return m_closedMouth; }
 
@@ -164,8 +201,7 @@ public:
     Ghost(GhostType type);
 
     void Reset(int level);
-    void Update(const Maze& maze, int pacmanGridY, int pacmanGridX, const LevelConfig& levelCfg);
-    void Render(CgaRenderer& renderer, bool flashWhite) const;
+    void Update(const Maze& maze, int pacmanGridY, int pacmanGridX, const LevelConfig& levelCfg, LcgRng& rng = GlobalRandom());
 
     void SetFrightened();
     void ClearFrightened();
@@ -178,6 +214,9 @@ public:
     EntityPosition GetPos() const;
     int GetGridY() const { return m_gridY; }
     int GetGridX() const { return m_gridX; }
+    Direction GetDirection() const { return m_dir; }
+    int GetFootFrame() const { return m_footFrame; }
+    int GetSpriteVariation(bool flashWhite) const;
     GhostType GetType() const { return m_type; }
     void SetGridPos(int gridY, int gridX, Direction dir = Direction::Up) {
         m_gridY = gridY;
@@ -208,18 +247,7 @@ private:
     // 0 = normal, 1 = corner pause / intermediate, 2 = tunnel / frightened 50% speed
     uint8_t m_speedSkip = 0;
 
-    Direction ChooseDirection(const Maze& maze, int pacmanGridY, int pacmanGridX, uint8_t ghostWeight);
+    Direction ChooseDirection(const Maze& maze, int pacmanGridY, int pacmanGridX, uint8_t ghostWeight, LcgRng& rng);
 };
-
-// Authentic 16-bit LCG step verbatim from routine 0x0C01 in Pcman v1.com:
-// seed = (seed * 0x98DD + 0xD5EF) & 0xFFFF
-// Computed in uint32_t: uint16_t would promote to int, and seed * 0x98DD overflows int for large seeds.
-constexpr uint16_t LcgStep(uint16_t seed) {
-    return static_cast<uint16_t>(static_cast<uint32_t>(seed) * 0x98DDu + 0xD5EFu);
-}
-
-// Authentic shared global 16-bit PRNG at DS:0x2D24 in Pcman v1.com (0x0C01..0x0C0C)
-uint16_t NextGlobalRandom();
-void ResetGlobalRandom(uint16_t seed = 0);
 
 } // namespace pcman

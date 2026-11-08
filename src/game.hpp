@@ -16,6 +16,14 @@ enum class GameState {
     GameOver
 };
 
+// Platform-independent frame input state
+struct InputState {
+    Direction desiredDir = Direction::None;
+    bool startPressed = false;
+    bool escapePressed = false;
+    bool muteToggled = false;
+};
+
 // Check if two points are within rectangular touch radius (used for fruit touch)
 constexpr bool CheckTouchBox(int x1, int y1, int x2, int y2, int radius = 8) {
     int dx = x1 - x2;
@@ -41,6 +49,8 @@ public:
     void Close();
 
     void Update();
+    void Update(float dt, const InputState& input);
+    void RenderFrame();
     void Render();
 
     // Game state accessors & simulation for testing
@@ -53,6 +63,9 @@ public:
     bool HasAwardedExtraLife() const { return m_awardedExtraLife; }
     const Pacman& GetPacman() const { return m_pacman; }
     Maze& GetMaze() { return m_maze; }
+    const CgaRenderer& GetRenderer() const { return m_renderer; }
+    PcSpeaker& GetSpeaker() { return m_speaker; }
+    const PcSpeaker& GetSpeaker() const { return m_speaker; }
     void StartNewGame();
     void Tick18Hz();
 
@@ -79,7 +92,6 @@ private:
     // Fruit bonus state
     bool m_fruitActive = false;
     int m_fruitTimer = 0;
-    int m_fruitScorePopup = 0;
     int m_fruitPopupTimer = 0;
 
     // Ghost eating combo points (200, 400, 800, 1600)
@@ -91,7 +103,6 @@ private:
     // Ghost eating freeze state & popup (0x0CE1..0x0D09 in ROM)
     float m_ghostFreezeTimer = 0.0f;
     EntityPosition m_eatenGhostPos{0, 0};
-    int m_eatenGhostScore = 0;
 
     // Death animation tick counter (34 ticks total at 18.2Hz)
     int m_deathTicks = 0;
@@ -123,25 +134,28 @@ private:
     static constexpr int FRUIT_ACTIVE_TICKS  = 135; // 0x87 ticks in v1.com (~7.4 seconds)
     static constexpr int FRUIT_POPUP_TICKS   = 60;  // 0x3C ticks in v1.com (~3.3 seconds)
 
-    // State transition timers (in seconds, frame-rate independent)
+    // State transition timer (in seconds, frame-rate independent)
     float m_stateTimer = 0.0f;
-    float m_flashTimer = 0.0f;
-    bool m_flashState = false;
 
     // Authentic 18.2065Hz DOS BIOS timer accumulator
     float m_tickAccumulator = 0.0f;
     int m_frightTimer = 0;
 
+    static InputState PollInput();
+
     void StartNewRound();
-    void HandleInput();
+    void ApplyInput(const InputState& input);
 
-    void UpdateTitleScreen();
-    void UpdateReady();
-    void UpdatePlaying();
-    void UpdatePacmanDying();
-    void UpdateLevelClear();
-    void UpdateGameOver();
+    void UpdateTitleScreen(float dt, const InputState& input);
+    void UpdateReady(float dt);
+    void UpdatePlaying(float dt);
+    void UpdatePacmanDying(float dt);
+    void UpdateLevelClear(float dt);
+    void UpdateGameOver(const InputState& input);
 
+    void RenderMaze();
+    void RenderPacman();
+    void RenderGhost(const Ghost& ghost, bool flashWhite);
     void RenderHUD();
     void RenderTitleScreen();
 };

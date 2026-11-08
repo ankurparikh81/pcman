@@ -1,5 +1,4 @@
 #pragma once
-#include <raylib.h>
 #include <cstdint>
 
 namespace pcman {
@@ -35,8 +34,11 @@ public:
     bool IsMuted() const;
     void ToggleMute();
 
+    // Synthesizer state inspection & sample generation (usable headlessly without audio device)
+    [[nodiscard]] float GetFrequency() const { return m_frequency; }
+    void FillAudioBuffer(int16_t* buffer, unsigned int frames);
+
 private:
-    AudioStream m_stream{};
     bool m_initialized = false;
     bool m_muted = false;
 
@@ -60,7 +62,6 @@ private:
     float m_phase = 0.0f;
 
     static void AudioInputCallback(void* buffer, unsigned int frames);
-    void FillAudioBuffer(int16_t* buffer, unsigned int frames);
 };
 
 } // namespace pcman

@@ -1,5 +1,6 @@
 #include "pc_speaker.hpp"
 #include "rom_data.hpp"
+#include <raylib.h>
 #include <cmath>
 #include <algorithm>
 
@@ -7,6 +8,7 @@ namespace pcman {
 
 namespace {
     PcSpeaker* s_instance = nullptr;
+    AudioStream s_stream{};
     constexpr int SAMPLE_RATE = 44100;
     constexpr float PIT_CLOCK = 1193182.0f;
 
@@ -50,9 +52,9 @@ PcSpeaker::~PcSpeaker() {
 void PcSpeaker::Init() {
     if (m_initialized) return;
 
-    m_stream = LoadAudioStream(SAMPLE_RATE, 16, 1);
-    SetAudioStreamCallback(m_stream, AudioInputCallback);
-    PlayAudioStream(m_stream);
+    s_stream = LoadAudioStream(SAMPLE_RATE, 16, 1);
+    SetAudioStreamCallback(s_stream, AudioInputCallback);
+    PlayAudioStream(s_stream);
 
     Silence();
     m_initialized = true;
@@ -60,8 +62,9 @@ void PcSpeaker::Init() {
 
 void PcSpeaker::Close() {
     if (m_initialized) {
-        StopAudioStream(m_stream);
-        UnloadAudioStream(m_stream);
+        StopAudioStream(s_stream);
+        UnloadAudioStream(s_stream);
+        s_stream = {};
         m_initialized = false;
     }
 }
@@ -127,11 +130,6 @@ void PcSpeaker::TriggerGhostEatenSound() {
 }
 
 void PcSpeaker::Tick18Hz() {
-    if (!m_initialized || m_muted) {
-        m_frequency = 0.0f;
-        return;
-    }
-
     uint16_t divisor = 2; // Default silent (2 turns PC speaker off in v1.com)
 
     // 1. Title tune sequence (DS:0x04E6, 137 notes at 1 note per tick, plays ONCE)
@@ -202,8 +200,8 @@ void PcSpeaker::Tick18Hz() {
         }
     }
 
-    // Set frequency: divisor <= 2 means silence in PC-Man v1.com
-    m_frequency = DivisorToFrequency(divisor);
+    // Set frequency: divisor <= 2 (or muted) means silence in PC-Man v1.com
+    m_frequency = m_muted ? 0.0f : DivisorToFrequency(divisor);
 }
 
 void PcSpeaker::AudioInputCallback(void* buffer, unsigned int frames) {

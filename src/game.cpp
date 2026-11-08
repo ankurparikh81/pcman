@@ -46,7 +46,6 @@ void Game::StartNewRound() {
     m_tickAccumulator = 0.0f;
     m_fruitActive = false;
     m_fruitTimer = 0;
-    m_fruitScorePopup = 0;
     m_fruitPopupTimer = 0;
     m_ghostCombo = 0;
     m_dotPauseToggle = 1;
@@ -56,33 +55,42 @@ void Game::StartNewRound() {
     m_speaker.Silence();
 }
 
-void Game::HandleInput() {
-    // Audio mute toggle (Ctrl-S or S)
+InputState Game::PollInput() {
+    InputState input{};
+
+    // Audio mute toggle (Ctrl-S)
     if (IsKeyPressed(KEY_S) && (IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL))) {
-        m_speaker.ToggleMute();
+        input.muteToggled = true;
     }
 
-    if (m_state != GameState::Playing) return;
+    // Start game / skip title tune (Space, 'J', or Gamepad face buttons)
+    if (IsKeyPressed(KEY_SPACE) || IsKeyPressed(KEY_J) ||
+        IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_DOWN) ||
+        IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT)) {
+        input.startPressed = true;
+    }
+
+    if (IsKeyPressed(KEY_ESCAPE)) {
+        input.escapePressed = true;
+    }
 
     // Pac-Man movement input supporting Arrow keys, WASD, IJKL, and ESDX diamond:
     // UP:    Up Arrow, 'W', 'E', 'I'
     // DOWN:  Down Arrow, 'S', 'X', 'J'
     // LEFT:  Left Arrow, 'A', 'K'
     // RIGHT: Right Arrow, 'D', 'L'
-    Direction desired = Direction::None;
-
     if (IsKeyDown(KEY_UP) || IsKeyDown(KEY_W) || IsKeyDown(KEY_E) || IsKeyDown(KEY_I) ||
         IsGamepadButtonDown(0, GAMEPAD_BUTTON_LEFT_FACE_UP)) {
-        desired = Direction::Up;
+        input.desiredDir = Direction::Up;
     } else if (IsKeyDown(KEY_DOWN) || IsKeyDown(KEY_S) || IsKeyDown(KEY_X) || IsKeyDown(KEY_J) ||
                IsGamepadButtonDown(0, GAMEPAD_BUTTON_LEFT_FACE_DOWN)) {
-        desired = Direction::Down;
+        input.desiredDir = Direction::Down;
     } else if (IsKeyDown(KEY_LEFT) || IsKeyDown(KEY_A) || IsKeyDown(KEY_K) ||
                IsGamepadButtonDown(0, GAMEPAD_BUTTON_LEFT_FACE_LEFT)) {
-        desired = Direction::Left;
+        input.desiredDir = Direction::Left;
     } else if (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D) || IsKeyDown(KEY_L) ||
                IsGamepadButtonDown(0, GAMEPAD_BUTTON_LEFT_FACE_RIGHT)) {
-        desired = Direction::Right;
+        input.desiredDir = Direction::Right;
     }
 
     // Left analog stick
@@ -90,20 +98,28 @@ void Game::HandleInput() {
     float stickY = GetGamepadAxisMovement(0, GAMEPAD_AXIS_LEFT_Y);
     if (std::abs(stickX) > 0.5f || std::abs(stickY) > 0.5f) {
         if (std::abs(stickX) > std::abs(stickY)) {
-            desired = (stickX > 0) ? Direction::Right : Direction::Left;
+            input.desiredDir = (stickX > 0) ? Direction::Right : Direction::Left;
         } else {
-            desired = (stickY > 0) ? Direction::Down : Direction::Up;
+            input.desiredDir = (stickY > 0) ? Direction::Down : Direction::Up;
         }
     }
 
-    if (desired != Direction::None) {
-        m_pacman.SetRequestedDirection(desired);
+    return input;
+}
+
+void Game::ApplyInput(const InputState& input) {
+    if (input.muteToggled) {
+        m_speaker.ToggleMute();
+    }
+
+    if (m_state == GameState::Playing && input.desiredDir != Direction::None) {
+        m_pacman.SetRequestedDirection(input.desiredDir);
     }
 }
 
-void Game::UpdateTitleScreen() {
+void Game::UpdateTitleScreen(float dt, const InputState& input) {
     // Clock title intro tune strictly at 18.2065 Hz BIOS tick frequency
-    m_tickAccumulator += GetFrameTime();
+    m_tickAccumulator += dt;
     if (m_tickAccumulator > MAX_TICK_ACCUMULATOR) m_tickAccumulator = MAX_TICK_ACCUMULATOR;
     while (m_tickAccumulator >= BIOS_TICK_INTERVAL) {
         m_tickAccumulator -= BIOS_TICK_INTERVAL;
@@ -111,9 +127,7 @@ void Game::UpdateTitleScreen() {
     }
 
     // Press Space or 'J' or Gamepad button to start game
-    if (IsKeyPressed(KEY_SPACE) || IsKeyPressed(KEY_J) ||
-        IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_DOWN) ||
-        IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT)) {
+    if (input.startPressed) {
         if (m_speaker.IsTitleTuneDone()) {
             StartNewGame();
         } else {
@@ -123,22 +137,22 @@ void Game::UpdateTitleScreen() {
     }
 }
 
-void Game::UpdateReady() {
+void Game::UpdateReady(float dt) {
     m_speaker.Silence();
-    m_stateTimer -= GetFrameTime();
+    m_stateTimer -= dt;
     if (m_stateTimer <= 0.0f) {
         m_state = GameState::Playing;
     }
 }
 
-void Game::UpdatePlaying() {
+void Game::UpdatePlaying(float dt) {
     // Freeze gameplay during frightened ghost eating chime (~0.438s matching 0x0CE1..0x0D09 in ROM)
     if (m_ghostFreezeTimer > 0.0f) {
-        m_ghostFreezeTimer -= GetFrameTime();
+        m_ghostFreezeTimer -= dt;
         return;
     }
 
-    m_tickAccumulator += GetFrameTime();
+    m_tickAccumulator += dt;
     if (m_tickAccumulator > MAX_TICK_ACCUMULATOR) m_tickAccumulator = MAX_TICK_ACCUMULATOR; // Prevent spiral if paused
 
     while (m_tickAccumulator >= BIOS_TICK_INTERVAL) {
@@ -152,7 +166,7 @@ void Game::Tick18Hz() {
     // 1. Authentic Dot-Eating Check BEFORE moving (0x0676..0x0743 in Pcman v1.com):
     // In Pcman v1.com, when Pac-Man enters a dot cell, he stops and consumes the dot
     // for 1 tick (takes 0 movement steps). This gives the authentic 3-tick-per-dot pace!
-    bool atIntersection = ((m_pacman.GetGridY() & 1) == 0) && ((m_pacman.GetGridX() & 1) == 0);
+    bool atIntersection = IsAtGridIntersection(m_pacman.GetGridY(), m_pacman.GetGridX());
     bool dotEatenThisTick = false;
 
     if (atIntersection) {
@@ -226,7 +240,6 @@ void Game::Tick18Hz() {
                 int fruitBonus = RomData::GetFruitScore(fruitIdx);
                 m_score += fruitBonus;
                 m_fruitActive = false;
-                m_fruitScorePopup = fruitBonus;
                 m_fruitPopupTimer = FRUIT_POPUP_TICKS; // Authentic 0x3C ticks in v1.com (~3.3 seconds)
                 m_speaker.TriggerFruitEat();
             }
@@ -254,7 +267,6 @@ void Game::Tick18Hz() {
                 m_ghostCombo++;
                 int comboScore = GhostComboScore(m_ghostCombo);
                 m_score += comboScore;
-                m_eatenGhostScore = comboScore;
                 m_eatenGhostPos = g.GetPos();
                 m_ghostFreezeTimer = GHOST_FREEZE_DURATION; // ~0.4386s freeze matching 0x0CE1..0x0D09 in ROM
                 m_speaker.TriggerGhostEatenSound();
@@ -278,17 +290,15 @@ void Game::Tick18Hz() {
     if (m_maze.GetRemainingDots() == 0) {
         m_state = GameState::LevelClear;
         m_stateTimer = LEVEL_CLEAR_DURATION; // Authentic ~2.60s sequence at 0x038C..0x040A in v1.com
-        m_flashTimer = 0.0f;
-        m_flashState = false;
         m_pacman.SetClosedMouth(true);       // Authentic solid circle mouth frame (0x2DD1 in ROM)
         m_renderer.SetFlashMode(false);
         m_speaker.Silence();
     }
 }
 
-void Game::UpdatePacmanDying() {
+void Game::UpdatePacmanDying(float dt) {
     // Advance death melting animation and audio using authentic 18.2Hz clock (34 ticks total)
-    m_tickAccumulator += GetFrameTime();
+    m_tickAccumulator += dt;
     if (m_tickAccumulator > MAX_TICK_ACCUMULATOR) m_tickAccumulator = MAX_TICK_ACCUMULATOR;
     while (m_tickAccumulator >= BIOS_TICK_INTERVAL) {
         m_tickAccumulator -= BIOS_TICK_INTERVAL;
@@ -309,8 +319,8 @@ void Game::UpdatePacmanDying() {
     }
 }
 
-void Game::UpdateLevelClear() {
-    m_stateTimer -= GetFrameTime();
+void Game::UpdateLevelClear(float dt) {
+    m_stateTimer -= dt;
     if (m_stateTimer <= 0.0f) {
         m_renderer.SetFlashMode(false);
         m_level++;
@@ -334,28 +344,77 @@ void Game::UpdateLevelClear() {
     }
 }
 
-void Game::UpdateGameOver() {
-    if (IsKeyPressed(KEY_SPACE) || IsKeyPressed(KEY_J) ||
-        IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_DOWN) ||
-        IsGamepadButtonPressed(0, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT)) {
+void Game::UpdateGameOver(const InputState& input) {
+    if (input.startPressed) {
         StartNewGame();
-    } else if (IsKeyPressed(KEY_ESCAPE)) {
+    } else if (input.escapePressed) {
         m_state = GameState::TitleScreen;
         m_speaker.PlayTitleTune();
     }
 }
 
-void Game::Update() {
-    HandleInput();
+void Game::Update(float dt, const InputState& input) {
+    ApplyInput(input);
 
     switch (m_state) {
-        case GameState::TitleScreen: UpdateTitleScreen(); break;
-        case GameState::Ready:       UpdateReady();       break;
-        case GameState::Playing:     UpdatePlaying();     break;
-        case GameState::PacmanDying: UpdatePacmanDying(); break;
-        case GameState::LevelClear:  UpdateLevelClear();  break;
-        case GameState::GameOver:    UpdateGameOver();    break;
+        case GameState::TitleScreen: UpdateTitleScreen(dt, input); break;
+        case GameState::Ready:       UpdateReady(dt);              break;
+        case GameState::Playing:     UpdatePlaying(dt);            break;
+        case GameState::PacmanDying: UpdatePacmanDying(dt);        break;
+        case GameState::LevelClear:  UpdateLevelClear(dt);         break;
+        case GameState::GameOver:    UpdateGameOver(input);        break;
     }
+}
+
+void Game::Update() {
+    Update(GetFrameTime(), PollInput());
+}
+
+void Game::RenderMaze() {
+    // 1. Draw maze wall tiles
+    for (int r = 0; r < MAZE_ROWS; ++r) {
+        for (int c = 0; c < MAZE_COLS; ++c) {
+            uint8_t t = RomData::GetMazeGridTile(c, r);
+            if (t != 0) {
+                m_renderer.BlitTile4x4(Maze::MAZE_SCREEN_X + c * TILE_WIDTH, Maze::MAZE_SCREEN_Y + r * TILE_HEIGHT, t);
+            }
+        }
+    }
+
+    // 2. Draw remaining dots
+    for (int r = 0; r < DOT_ROWS; ++r) {
+        for (int c = 0; c < DOT_COLS; ++c) {
+            uint8_t d = m_maze.GetDotAt(r, c);
+            if (d == 2 || d == 3) {
+                m_renderer.BlitDot8x8(Maze::DOT_OFFSET_X + c * 8, Maze::DOT_OFFSET_Y + r * 8, d);
+            }
+        }
+    }
+}
+
+void Game::RenderPacman() {
+    const auto pos = m_pacman.GetPos();
+
+    if (m_pacman.IsDying()) {
+        auto deathSprite = RomData::GetDeathSprite(m_pacman.GetDeathFrame());
+        m_renderer.BlitSpriteRaw(pos.x, pos.y, deathSprite.data(), true);
+    } else {
+        int dirIdx = static_cast<int>(m_pacman.GetDirection());
+        if (dirIdx < 0 || dirIdx > 3) dirIdx = 0;
+        int frame = m_pacman.GetActiveMouthFrame(); // Frame 2 is solid circle at 0x2DD1 in ROM
+        auto pacSprite = RomData::GetPacmanSprite(dirIdx, frame);
+        m_renderer.BlitSpriteRaw(pos.x, pos.y, pacSprite.data(), true);
+    }
+}
+
+void Game::RenderGhost(const Ghost& ghost, bool flashWhite) {
+    const auto pos = ghost.GetPos();
+    int variation = ghost.GetSpriteVariation(flashWhite);
+    int dirIdx = static_cast<int>(ghost.GetDirection());
+    if (dirIdx < 0 || dirIdx > 3) dirIdx = 0;
+
+    auto sprite = RomData::GetGhostSprite(variation, dirIdx, ghost.GetFootFrame());
+    m_renderer.BlitSpriteRaw(pos.x, pos.y, sprite.data(), true);
 }
 
 void Game::RenderHUD() {
@@ -411,12 +470,12 @@ void Game::RenderTitleScreen() {
     }
 }
 
-void Game::Render() {
+void Game::RenderFrame() {
     if (m_state == GameState::TitleScreen) {
         RenderTitleScreen();
     } else {
         m_renderer.Clear(0);
-        m_maze.Render(m_renderer);
+        RenderMaze();
         RenderHUD();
 
         // Active Fruit Bonus
@@ -431,7 +490,7 @@ void Game::Render() {
         }
 
         // Entities
-        m_pacman.Render(m_renderer);
+        RenderPacman();
 
         if (m_state != GameState::PacmanDying && m_state != GameState::LevelClear) {
             bool flashWhite = (m_frightTimer > 0 && m_frightTimer <= 70 && ((m_frightTimer / 8) % 2 == 1));
@@ -442,7 +501,7 @@ void Game::Render() {
                     static_cast<int>(g.GetPos().y) == static_cast<int>(m_eatenGhostPos.y)) {
                     continue;
                 }
-                g.Render(m_renderer, flashWhite);
+                RenderGhost(g, flashWhite);
             }
         }
 
@@ -462,7 +521,10 @@ void Game::Render() {
             m_renderer.DrawText8x8(16, 112, "    OR \"J\"-key FOR JOYSTICK PLAY    ", 2);
         }
     }
+}
 
+void Game::Render() {
+    RenderFrame();
     m_renderer.Present(GetScreenWidth(), GetScreenHeight());
 }
 

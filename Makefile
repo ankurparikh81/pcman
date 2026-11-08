@@ -25,13 +25,15 @@ else
     TARGET = pcman.exe
 endif
 
-SRCS = src/main.cpp \
-       src/cga_renderer.cpp \
-       src/pc_speaker.cpp \
-       src/maze.cpp \
-       src/entities.cpp \
-       src/game.cpp
+CORE_SRCS = src/cga_renderer.cpp \
+            src/pc_speaker.cpp \
+            src/maze.cpp \
+            src/entities.cpp \
+            src/game.cpp
 
+SRCS = src/main.cpp $(CORE_SRCS)
+
+CORE_OBJS = $(CORE_SRCS:.cpp=.o)
 OBJS = $(SRCS:.cpp=.o)
 
 all: $(TARGET)
@@ -39,8 +41,10 @@ all: $(TARGET)
 $(TARGET): $(OBJS)
 	$(CXX) $(OBJS) -o $(TARGET) $(LDFLAGS)
 
-test: $(TARGET)
-	$(CXX) $(CXXFLAGS) tests/test_pcman.cpp src/maze.cpp src/cga_renderer.cpp src/entities.cpp src/pc_speaker.cpp src/game.cpp -o tests/test_pcman $(LDFLAGS)
+tests/test_pcman: tests/test_pcman.cpp $(CORE_OBJS)
+	$(CXX) $(CXXFLAGS) tests/test_pcman.cpp $(CORE_OBJS) -o tests/test_pcman $(LDFLAGS)
+
+test: $(TARGET) tests/test_pcman
 	./tests/test_pcman
 
 %.o: %.cpp
