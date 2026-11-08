@@ -1,4 +1,5 @@
 #include "maze.hpp"
+#include "serialization.hpp"
 #include "game_data.hpp"
 #include "rom_data.hpp"
 
@@ -51,6 +52,26 @@ uint8_t Maze::CheckAndEatDotAtGrid(int gridY, int gridX) {
 
 int Maze::GetRemainingDots() const {
     return m_remainingDots;
+}
+
+MazeSnapshot Maze::SaveState() const {
+    return MazeSnapshot{
+        .cells = m_cells,
+        .remainingDots = m_remainingDots
+    };
+}
+
+bool Maze::LoadState(const MazeSnapshot& snapshot) {
+    int countedDots = 0;
+    for (uint8_t c : snapshot.cells) {
+        if (c > 3) return false;
+        if (c == 2 || c == 3) countedDots++;
+    }
+    if (snapshot.remainingDots != countedDots) return false;
+
+    m_cells = snapshot.cells;
+    m_remainingDots = snapshot.remainingDots;
+    return true;
 }
 
 } // namespace pcman

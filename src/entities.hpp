@@ -9,6 +9,8 @@ namespace pcman {
 
 class IGhostController;
 struct GameContext;
+struct PacmanSnapshot;
+struct GhostSnapshot;
 
 // Direction values matching original Pcman v1.com:
 // 0 = Up, 1 = Down, 2 = Left, 3 = Right
@@ -112,7 +114,7 @@ inline constexpr int PEN_DOOR_PIXEL_Y = 93;
 inline constexpr int PEN_BOUNCE_MIN_X = 168;
 inline constexpr int PEN_BOUNCE_MAX_X = 184;
 
-enum class GhostType {
+enum class GhostType : uint8_t {
     Blinky = 0, // Red / Chaser
     Pinky = 1,  // Pink / Ambusher
     Inky = 2,   // Cyan / Outside pen at start
@@ -186,6 +188,9 @@ public:
     int GetDeathFrame() const { return m_deathFrame; }
     void UpdateDeath();
 
+    PacmanSnapshot SaveState() const;
+    void LoadState(const PacmanSnapshot& snapshot);
+
 private:
     int m_gridY = 25; // Authentic starting grid coordinates (0x1725 in ROM)
     int m_gridX = 14;
@@ -239,6 +244,9 @@ public:
 
     // Manhattan distance collision check matching 0x089E..0x08B6 (|dY| + |dX| <= 2)
     bool CheckCollision(int pacmanGridY, int pacmanGridX) const;
+
+    GhostSnapshot SaveState() const;
+    void LoadState(const GhostSnapshot& snapshot);
 
 private:
     GhostType m_type;

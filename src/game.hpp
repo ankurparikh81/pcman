@@ -4,19 +4,14 @@
 #include "maze.hpp"
 #include "entities.hpp"
 #include "controllers.hpp"
+#include "serialization.hpp"
 #include <array>
+#include <filesystem>
 #include <memory>
+#include <span>
+#include <vector>
 
 namespace pcman {
-
-enum class GameState {
-    TitleScreen = 0,
-    Ready,
-    Playing,
-    PacmanDying,
-    LevelClear,
-    GameOver
-};
 
 // Check if two points are within rectangular touch radius (used for fruit touch)
 constexpr bool CheckTouchBox(int x1, int y1, int x2, int y2, int radius = 8) {
@@ -82,6 +77,14 @@ public:
     const PcSpeaker& GetSpeaker() const { return m_speaker; }
     void StartNewGame();
     void Tick18Hz();
+
+    // State snapshotting & binary serialization
+    GameSnapshot SaveState(const LcgRng& rng = GlobalRandom()) const;
+    bool LoadState(const GameSnapshot& snapshot, LcgRng& rng = GlobalRandom());
+    std::vector<uint8_t> SerializeState(const LcgRng& rng = GlobalRandom()) const;
+    bool DeserializeState(std::span<const uint8_t> data, LcgRng& rng = GlobalRandom());
+    bool SaveStateToFile(const std::filesystem::path& path, const LcgRng& rng = GlobalRandom()) const;
+    bool LoadStateFromFile(const std::filesystem::path& path, LcgRng& rng = GlobalRandom());
 
 private:
     CgaRenderer m_renderer;

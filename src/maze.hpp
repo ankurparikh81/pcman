@@ -5,6 +5,8 @@
 
 namespace pcman {
 
+struct MazeSnapshot;
+
 class Maze {
 public:
     Maze();
@@ -39,6 +41,9 @@ public:
     int GetRemainingDots() const;
     void ClearAllDots() { m_remainingDots = 0; }
     static constexpr int GetTotalDots() { return TOTAL_PELLETS; }
+
+    MazeSnapshot SaveState() const;
+    bool LoadState(const MazeSnapshot& snapshot);
 
 private:
     std::array<uint8_t, COLLISION_SIZE> m_cells{};

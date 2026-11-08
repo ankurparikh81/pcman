@@ -30,6 +30,7 @@ CORE_SRCS = src/cga_renderer.cpp \
             src/maze.cpp \
             src/entities.cpp \
             src/controllers.cpp \
+            src/serialization.cpp \
             src/game.cpp
 
 SRCS = src/main.cpp $(CORE_SRCS)

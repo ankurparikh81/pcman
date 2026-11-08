@@ -2,8 +2,11 @@
 #include "maze.hpp"
 #include "entities.hpp"
 #include "controllers.hpp"
+#include "serialization.hpp"
 #include "game.hpp"
 #include <iostream>
+#include <sstream>
+#include <filesystem>
 #include <cassert>
 
 using namespace pcman;
@@ -818,6 +821,105 @@ void TestPluggableControllers() {
     std::cout << "  -> All Pluggable Controller checks passed!\n";
 }
 
+void TestGameStateSerialization() {
+    std::cout << "[Test] Validating Deterministic Game State Serialization & Rollout Continuity...\n";
+
+    // Simple deterministic Pac-Man AI that turns toward open corridors with pellets
+    auto pelletAI = [](const Pacman& self, const GameContext& ctx) {
+        int gy = self.GetGridY();
+        int gx = self.GetGridX();
+        if (!IsAtGridIntersection(gy, gx)) return self.GetDirection();
+        Direction oppDir = Opposite(self.GetDirection());
+        Direction fallback = Direction::None;
+        for (int d = 0; d < 4; ++d) {
+            Direction cand = static_cast<Direction>(d);
+            if (!CanMoveInDirection(ctx.maze, gy, gx, cand)) continue;
+            int nr = (gy / 2) + DeltaRow(cand);
+            int nc = (gx / 2) + DeltaCol(cand);
+            uint8_t cell = ctx.maze.GetCell(nr, nc);
+            if (cell == 2 || cell == 3) return cand;
+            if (cand != oppDir && fallback == Direction::None) fallback = cand;
+        }
+        return (fallback != Direction::None) ? fallback : oppDir;
+    };
+
+    Game gameA;
+    gameA.SetPacmanController(pelletAI);
+    gameA.StartNewGame();
+    gameA.SetState(GameState::Playing);
+
+    // Advance 120 ticks to reach a rich mid-game state (dots eaten, ghosts moving/releasing, RNG advanced)
+    for (int t = 0; t < 120 && gameA.GetState() == GameState::Playing; ++t) {
+        gameA.Tick18Hz();
+    }
+
+    // 1. Capture in-memory snapshot and binary representation
+    GameSnapshot checkpoint = gameA.SaveState();
+    assert(ValidateSnapshot(checkpoint));
+    std::vector<uint8_t> binaryData = gameA.SerializeState();
+    assert(binaryData.size() > 900 && binaryData.size() < 1100);
+    std::cout << "  - Serialized mid-game snapshot into " << binaryData.size() << " bytes!\n";
+
+    // 2. Round-trip through stream and file
+    std::stringstream ss(std::ios::in | std::ios::out | std::ios::binary);
+    assert(WriteSnapshotToStream(checkpoint, ss));
+    GameSnapshot streamRestored{};
+    assert(ReadSnapshotFromStream(ss, streamRestored));
+    assert(streamRestored == checkpoint);
+
+    auto tmpPath = std::filesystem::temp_directory_path() / "pcman_test_state.bin";
+    assert(gameA.SaveStateToFile(tmpPath));
+    Game fileRestoredGame;
+    assert(fileRestoredGame.LoadStateFromFile(tmpPath));
+    std::filesystem::remove(tmpPath);
+    assert(fileRestoredGame.SaveState() == checkpoint);
+    std::cout << "  - Verified exact round-trip equivalence across memory, stream, and file!\n";
+
+    // 3. Bit-exact deterministic rollout continuity from restored state:
+    // Continue gameA for 150 ticks and compare against a fresh gameB restored from `binaryData`
+    for (int t = 0; t < 150; ++t) {
+        gameA.Tick18Hz();
+    }
+    GameSnapshot endStateA = gameA.SaveState();
+
+    Game gameB;
+    gameB.SetPacmanController(pelletAI);
+    assert(gameB.DeserializeState(binaryData));
+    assert(gameB.SaveState() == checkpoint);
+    for (int t = 0; t < 150; ++t) {
+        gameB.Tick18Hz();
+    }
+    GameSnapshot endStateB = gameB.SaveState();
+    assert(endStateA == endStateB);
+    std::cout << "  - Verified 100% bit-exact rollout continuity across 150 ticks (score="
+              << endStateB.score << ", rngSeed=0x" << std::hex << endStateB.rngSeed << std::dec << ")!\n";
+
+    // 4. Corruption & tamper rejection checks
+    GameSnapshot dummy{};
+    // Truncated buffer
+    assert(!DeserializeSnapshot(std::span<const uint8_t>(binaryData.data(), 8), dummy));
+    assert(!DeserializeSnapshot(std::span<const uint8_t>(binaryData.data(), binaryData.size() - 1), dummy));
+
+    // Corrupted payload byte (checksum mismatch)
+    auto corruptedPayload = binaryData;
+    corruptedPayload.back() ^= 0xFFu;
+    assert(!DeserializeSnapshot(corruptedPayload, dummy));
+
+    // Corrupted magic header
+    auto corruptedMagic = binaryData;
+    corruptedMagic[0] = 'X';
+    assert(!DeserializeSnapshot(corruptedMagic, dummy));
+
+    // Semantically invalid dot count
+    GameSnapshot badDotSnap = checkpoint;
+    badDotSnap.maze.remainingDots += 5;
+    assert(!ValidateSnapshot(badDotSnap));
+    assert(!gameB.LoadState(badDotSnap));
+    std::cout << "  - Verified rejection of truncated buffers, bad magic, checksum mismatches, and invalid dot counts!\n";
+
+    std::cout << "  -> All Game State Serialization checks passed!\n";
+}
+
 int main() {
     std::cout << "=== Running PC-Man Unit Tests ===\n";
     TestRomData();
@@ -834,6 +936,7 @@ int main() {
     TestPcSpeakerSynth();
     TestGameStateMachine();
     TestPluggableControllers();
+    TestGameStateSerialization();
     std::cout << "=== All Unit Tests Passed Successfully! ===\n";
     return 0;
 }

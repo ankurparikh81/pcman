@@ -76,6 +76,92 @@ GameContext Game::MakeContext(LcgRng& rng) const {
     };
 }
 
+GameSnapshot Game::SaveState(const LcgRng& rng) const {
+    GameSnapshot snap{};
+    snap.maze = m_maze.SaveState();
+    snap.pacman = m_pacman.SaveState();
+    for (size_t i = 0; i < m_ghosts.size(); ++i) {
+        snap.ghosts[i] = m_ghosts[i].SaveState();
+    }
+    snap.rngSeed = rng.GetSeed();
+    snap.state = m_state;
+    snap.score = m_score;
+    snap.highScore = m_highScore;
+    snap.lives = m_lives;
+    snap.level = m_level;
+    snap.fruitActive = m_fruitActive;
+    snap.fruitTimer = m_fruitTimer;
+    snap.fruitPopupTimer = m_fruitPopupTimer;
+    snap.ghostCombo = m_ghostCombo;
+    snap.dotPauseToggle = m_dotPauseToggle;
+    snap.ghostFreezeTimer = m_ghostFreezeTimer;
+    snap.eatenGhostPosX = m_eatenGhostPos.x;
+    snap.eatenGhostPosY = m_eatenGhostPos.y;
+    snap.deathTicks = m_deathTicks;
+    snap.awardedExtraLife = m_awardedExtraLife;
+    snap.stateTimer = m_stateTimer;
+    snap.tickAccumulator = m_tickAccumulator;
+    snap.frightTimer = m_frightTimer;
+    snap.pendingInputDir = m_pendingInput.desiredDir;
+    return snap;
+}
+
+bool Game::LoadState(const GameSnapshot& snapshot, LcgRng& rng) {
+    if (!ValidateSnapshot(snapshot)) return false;
+    if (!m_maze.LoadState(snapshot.maze)) return false;
+
+    m_pacman.LoadState(snapshot.pacman);
+    for (size_t i = 0; i < m_ghosts.size(); ++i) {
+        m_ghosts[i].LoadState(snapshot.ghosts[i]);
+    }
+    rng.Reset(snapshot.rngSeed);
+
+    m_state = snapshot.state;
+    m_score = snapshot.score;
+    m_highScore = snapshot.highScore;
+    m_lives = snapshot.lives;
+    m_level = snapshot.level;
+    m_fruitActive = snapshot.fruitActive;
+    m_fruitTimer = snapshot.fruitTimer;
+    m_fruitPopupTimer = snapshot.fruitPopupTimer;
+    m_ghostCombo = snapshot.ghostCombo;
+    m_dotPauseToggle = snapshot.dotPauseToggle;
+    m_ghostFreezeTimer = snapshot.ghostFreezeTimer;
+    m_eatenGhostPos = { snapshot.eatenGhostPosX, snapshot.eatenGhostPosY };
+    m_deathTicks = snapshot.deathTicks;
+    m_awardedExtraLife = snapshot.awardedExtraLife;
+    m_stateTimer = snapshot.stateTimer;
+    m_tickAccumulator = snapshot.tickAccumulator;
+    m_frightTimer = snapshot.frightTimer;
+    m_pendingInput = InputState{};
+    m_pendingInput.desiredDir = snapshot.pendingInputDir;
+
+    if (m_state != GameState::LevelClear) {
+        m_renderer.SetFlashMode(false);
+    }
+    return true;
+}
+
+std::vector<uint8_t> Game::SerializeState(const LcgRng& rng) const {
+    return SerializeSnapshot(SaveState(rng));
+}
+
+bool Game::DeserializeState(std::span<const uint8_t> data, LcgRng& rng) {
+    GameSnapshot snap{};
+    if (!DeserializeSnapshot(data, snap)) return false;
+    return LoadState(snap, rng);
+}
+
+bool Game::SaveStateToFile(const std::filesystem::path& path, const LcgRng& rng) const {
+    return SaveSnapshotToFile(SaveState(rng), path);
+}
+
+bool Game::LoadStateFromFile(const std::filesystem::path& path, LcgRng& rng) {
+    GameSnapshot snap{};
+    if (!LoadSnapshotFromFile(path, snap)) return false;
+    return LoadState(snap, rng);
+}
+
 void Game::StartNewGame() {
     ResetGlobalRandom(0);
     m_score = 0;

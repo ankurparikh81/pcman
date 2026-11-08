@@ -1,5 +1,6 @@
 #include "entities.hpp"
 #include "controllers.hpp"
+#include "serialization.hpp"
 #include "rom_data.hpp"
 #include <cmath>
 #include <algorithm>
@@ -105,6 +106,34 @@ void Pacman::Update(const Maze& maze) {
     if (m_isMoving) {
         m_mouthFrame = (m_mouthFrame + 1) & 3;
     }
+}
+
+PacmanSnapshot Pacman::SaveState() const {
+    return PacmanSnapshot{
+        .gridY = m_gridY,
+        .gridX = m_gridX,
+        .currentDir = m_currentDir,
+        .requestedDir = m_requestedDir,
+        .isMoving = m_isMoving,
+        .closedMouth = m_closedMouth,
+        .isDying = m_isDying,
+        .mouthFrame = m_mouthFrame,
+        .deathFrame = m_deathFrame,
+        .deathTick = m_deathTick
+    };
+}
+
+void Pacman::LoadState(const PacmanSnapshot& snapshot) {
+    m_gridY = snapshot.gridY;
+    m_gridX = snapshot.gridX;
+    m_currentDir = snapshot.currentDir;
+    m_requestedDir = snapshot.requestedDir;
+    m_isMoving = snapshot.isMoving;
+    m_closedMouth = snapshot.closedMouth;
+    m_isDying = snapshot.isDying;
+    m_mouthFrame = snapshot.mouthFrame;
+    m_deathFrame = snapshot.deathFrame;
+    m_deathTick = snapshot.deathTick;
 }
 
 // =========================================================================
@@ -338,6 +367,32 @@ int Ghost::GetSpriteVariation(bool flashWhite) const {
         return flashWhite ? 5 : 4; // Frightened blue or flashing white
     }
     return static_cast<int>(m_type); // 0=Blinky, 1=Pinky, 2=Inky, 3=Clyde
+}
+
+GhostSnapshot Ghost::SaveState() const {
+    return GhostSnapshot{
+        .type = m_type,
+        .flags = m_flags,
+        .dir = m_dir,
+        .speedSkip = m_speedSkip,
+        .gridY = m_gridY,
+        .gridX = m_gridX,
+        .penPixelX = m_penPixelX,
+        .penPixelY = m_penPixelY,
+        .footFrame = m_footFrame
+    };
+}
+
+void Ghost::LoadState(const GhostSnapshot& snapshot) {
+    m_type = snapshot.type;
+    m_flags = snapshot.flags;
+    m_dir = snapshot.dir;
+    m_speedSkip = snapshot.speedSkip;
+    m_gridY = snapshot.gridY;
+    m_gridX = snapshot.gridX;
+    m_penPixelX = snapshot.penPixelX;
+    m_penPixelY = snapshot.penPixelY;
+    m_footFrame = snapshot.footFrame;
 }
 
 } // namespace pcman

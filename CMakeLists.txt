@@ -11,6 +11,7 @@ set(CORE_SOURCES
     src/maze.cpp
     src/entities.cpp
     src/controllers.cpp
+    src/serialization.cpp
     src/game.cpp
 )
 
