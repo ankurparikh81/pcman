@@ -3,7 +3,9 @@
 #include "pc_speaker.hpp"
 #include "maze.hpp"
 #include "entities.hpp"
+#include "controllers.hpp"
 #include <array>
+#include <memory>
 
 namespace pcman {
 
@@ -14,14 +16,6 @@ enum class GameState {
     PacmanDying,
     LevelClear,
     GameOver
-};
-
-// Platform-independent frame input state
-struct InputState {
-    Direction desiredDir = Direction::None;
-    bool startPressed = false;
-    bool escapePressed = false;
-    bool muteToggled = false;
 };
 
 // Check if two points are within rectangular touch radius (used for fruit touch)
@@ -53,6 +47,17 @@ public:
     void RenderFrame();
     void Render();
 
+    // Controller injection API for Pac-Man and individual Ghosts
+    void SetPacmanController(std::shared_ptr<IPacmanController> controller);
+    void SetPacmanController(FnPacmanController::Fn fn);
+    const std::shared_ptr<IPacmanController>& GetPacmanController() const { return m_pacmanController; }
+
+    void SetGhostController(GhostType type, std::shared_ptr<IGhostController> controller);
+    void SetGhostController(GhostType type, FnGhostController::Fn fn);
+    void SetGhostController(size_t index, std::shared_ptr<IGhostController> controller);
+    void SetAllGhostControllers(std::shared_ptr<IGhostController> controller);
+    void SetAllGhostControllers(FnGhostController::Fn fn);
+
     // Game state accessors & simulation for testing
     int GetScore() const { return m_score; }
     int GetLives() const { return m_lives; }
@@ -62,7 +67,16 @@ public:
     void SetScore(int score) { m_score = score; }
     bool HasAwardedExtraLife() const { return m_awardedExtraLife; }
     const Pacman& GetPacman() const { return m_pacman; }
+    Pacman& GetPacman() { return m_pacman; }
+    const Maze& GetMaze() const { return m_maze; }
     Maze& GetMaze() { return m_maze; }
+    const std::array<Ghost, 4>& GetGhosts() const { return m_ghosts; }
+    const Ghost& GetGhost(GhostType type) const { return m_ghosts[static_cast<size_t>(type)]; }
+    Ghost& GetGhost(GhostType type) { return m_ghosts[static_cast<size_t>(type)]; }
+    int GetFrightTimer() const { return m_frightTimer; }
+    bool IsFruitActive() const { return m_fruitActive; }
+    int GetFruitTimer() const { return m_fruitTimer; }
+    GameContext MakeContext(LcgRng& rng = GlobalRandom()) const;
     const CgaRenderer& GetRenderer() const { return m_renderer; }
     PcSpeaker& GetSpeaker() { return m_speaker; }
     const PcSpeaker& GetSpeaker() const { return m_speaker; }
@@ -75,6 +89,8 @@ private:
     Maze m_maze;
 
     Pacman m_pacman;
+    std::shared_ptr<IPacmanController> m_pacmanController = MakeHumanPacmanController();
+    InputState m_pendingInput{};
     std::array<Ghost, 4> m_ghosts{
         Ghost(GhostType::Blinky),
         Ghost(GhostType::Pinky),

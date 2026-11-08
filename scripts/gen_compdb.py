@@ -11,6 +11,7 @@ def main():
         "src/pc_speaker.cpp",
         "src/maze.cpp",
         "src/entities.cpp",
+        "src/controllers.cpp",
         "src/game.cpp",
         "tests/test_pcman.cpp",
     ]

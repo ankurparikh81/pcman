@@ -1,4 +1,5 @@
 #include "entities.hpp"
+#include "controllers.hpp"
 #include "rom_data.hpp"
 #include <cmath>
 #include <algorithm>
@@ -110,8 +111,14 @@ void Pacman::Update(const Maze& maze) {
 // GHOST IMPLEMENTATION (Authentic Pcman v1.com AI Algorithm)
 // =========================================================================
 
-Ghost::Ghost(GhostType type) : m_type(type) {
+Ghost::Ghost(GhostType type)
+    : m_type(type),
+      m_controller(MakeOriginalGhostController()) {
     Reset(1);
+}
+
+void Ghost::SetController(std::shared_ptr<IGhostController> controller) {
+    m_controller = controller ? std::move(controller) : MakeOriginalGhostController();
 }
 
 // Authentic 16-bit Linear Congruential PRNG verbatim from routine 0x0C01 at DS:0x2D24 in v1.com:
@@ -142,6 +149,9 @@ void Ghost::Reset(int level) {
     m_gridY = cfg.gridY;
     m_gridX = cfg.gridX;
     m_dir = cfg.dir;
+    if (m_controller) {
+        m_controller->OnReset();
+    }
 }
 
 void Ghost::SetFrightened() {
@@ -175,103 +185,27 @@ bool Ghost::CheckCollision(int pacmanGridY, int pacmanGridX) const {
     return CheckGridCollision(m_gridY, m_gridX, pacmanGridY, pacmanGridX);
 }
 
-// Exact translation of the 8086 Ghost AI decision function at 0x095A..0x0AFF in Pcman v1.com
-Direction Ghost::ChooseDirection(const Maze& maze, int pacmanGridY, int pacmanGridX, uint8_t ghostWeight, LcgRng& rng) {
-    // 1. Initialize weights for all 4 directions to 1:
-    // Index 0 = Up, 1 = Down, 2 = Left, 3 = Right
-    std::array<int, 4> weights = {1, 1, 1, 1};
-
-    // 2. Target coordinates and pursuit weight
-    int targetY = pacmanGridY;
-    int targetX = pacmanGridX;
-    int weight = ghostWeight;
-    bool isFrightened = IsFrightened();
-
-    if (IsEaten()) {
-        // Eaten eyes returning to pen entrance door at (grid_y = 26, grid_x = 38)
-        weight = 0x3C; // Maximum pursuit weight (60)
-        targetY = PEN_DOOR_GRID_Y;
-        targetX = PEN_DOOR_GRID_X;
-        isFrightened = false;
-    }
-
-    // Vertical preference:
-    int dy = targetY - m_gridY;
-    if (isFrightened) dy = -dy; // Reverse target in frightened mode (run away from Pac-Man!)
-    if (dy < 0) {
-        weights[static_cast<int>(Direction::Up)] = weight;
-    } else if (dy > 0) {
-        weights[static_cast<int>(Direction::Down)] = weight;
-    }
-
-    // Horizontal preference:
-    int dx = targetX - m_gridX;
-    if (isFrightened) dx = -dx; // Reverse target in frightened mode
-    if (dx < 0) {
-        weights[static_cast<int>(Direction::Left)] = weight;
-    } else if (dx > 0) {
-        weights[static_cast<int>(Direction::Right)] = weight;
-    }
-
-    // 3. Wall collision check (0x0A94..0x0AAD):
-    // Any direction that hits a wall (cell value == 0) receives weight 0!
-    int curRow = m_gridY / 2;
-    int curCol = m_gridX / 2;
-
-    static constexpr std::array<int, 4> dRow = {-1, 1, 0, 0}; // Up, Down, Left, Right
-    static constexpr std::array<int, 4> dCol = {0, 0, -1, 1};
-
-    for (int d = 0; d < 4; ++d) {
-        int nr = curRow + dRow[d];
-        int nc = curCol + dCol[d];
-        if (!maze.IsWalkable(nr, nc)) {
-            weights[d] = 0;
-        }
-    }
-
-    // 4. Inertia & Reversal Prohibition (0x0AAF..0x0AD8):
-    int curDirIdx = static_cast<int>(m_dir);
-    if (curDirIdx >= 0 && curDirIdx < 4) {
-        // Double weight of continuing straight UNLESS speedSkip == 1
-        // OR in vertical tunnel (gridX == 32 && (curDir == Up || curDir == Down)):
-        bool inVerticalTunnel = (m_gridX == TUNNEL_GRID_X) && (m_dir == Direction::Up || m_dir == Direction::Down);
-        if (m_speedSkip != 1 && !inVerticalTunnel) {
-            weights[curDirIdx] *= 2;
-        }
-
-        // Zero weight for turning 180 degrees backward (reversals are strictly forbidden)
-        int oppDirIdx = curDirIdx ^ 1;
-        weights[oppDirIdx] = 0;
-    }
-
-    // 5. Roulette-wheel selection using 16-bit PRNG (0x0AD9..0x0AFE):
-    int sum = weights[0] + weights[1] + weights[2] + weights[3];
-    if (sum <= 0) {
-        // Dead end or all blocked: reverse or find any walkable neighbor
-        for (int d = 0; d < 4; ++d) {
-            int nr = curRow + dRow[d];
-            int nc = curCol + dCol[d];
-            if (maze.IsWalkable(nr, nc)) {
-                return static_cast<Direction>(d);
-            }
-        }
-        return m_dir;
-    }
-
-    uint16_t rnd = rng.Next();
-    int threshold = static_cast<int>((static_cast<uint32_t>(rnd) * static_cast<uint32_t>(sum)) >> 16);
-
-    for (int d = 0; d < 4; ++d) {
-        threshold -= weights[d];
-        if (threshold < 0) {
-            return static_cast<Direction>(d);
-        }
-    }
-
-    return Direction::Right;
+void Ghost::Update(const Maze& maze, int pacmanGridY, int pacmanGridX, const LevelConfig& levelCfg, LcgRng& rng) {
+    Pacman dummyPacman;
+    dummyPacman.SetGridPos(pacmanGridY, pacmanGridX, Direction::Up);
+    GameContext ctx{
+        .maze = maze,
+        .pacman = dummyPacman,
+        .ghosts = nullptr,
+        .levelConfig = levelCfg,
+        .level = 1,
+        .score = 0,
+        .lives = 3,
+        .frightTimer = IsFrightened() ? static_cast<int>(levelCfg.frightTime) : 0,
+        .fruitActive = false,
+        .fruitTimer = 0,
+        .input = {},
+        .rng = rng
+    };
+    Update(ctx);
 }
 
-void Ghost::Update(const Maze& maze, int pacmanGridY, int pacmanGridX, const LevelConfig& levelCfg, LcgRng& rng) {
+void Ghost::Update(const GameContext& ctx) {
     // Authentic speed/skip counter from 0x07B2..0x07BE & 0x0896..0x08C4 in Pcman v1.com:
     // When m_speedSkip >= 2 (tunnel or frightened mode), skip this tick and decrement
     if (m_speedSkip >= 2) {
@@ -292,7 +226,7 @@ void Ghost::Update(const Maze& maze, int pacmanGridY, int pacmanGridX, const Lev
                 m_dir = Direction::Right;
 
                 // Authentic pen release roll when turning from left boundary to Right (0x0AD2 in v1.com)
-                if (!IsFrightened() && rng.Next() < levelCfg.penThresh) {
+                if (!IsFrightened() && ctx.rng.Next() < ctx.levelConfig.penThresh) {
                     m_flags = GhostFlags::ExitingPen; // Transition to exiting pen
                 }
             } else if (m_penPixelX >= PEN_BOUNCE_MAX_X) {
@@ -323,14 +257,20 @@ void Ghost::Update(const Maze& maze, int pacmanGridY, int pacmanGridX, const Lev
                 m_flags = GhostFlags::Active;
                 m_gridY = 25;
                 m_gridX = PEN_DOOR_GRID_X;
-                m_dir = (rng.Next() & 1) ? Direction::Up : Direction::Down;
+                m_dir = (ctx.rng.Next() & 1) ? Direction::Up : Direction::Down;
             }
             m_footFrame ^= 1;
             break;
         } else {
             // Active in maze (Normal, Frightened, or Eaten Eyes)
             if (IsAtGridIntersection(m_gridY, m_gridX)) {
-                Direction newDir = ChooseDirection(maze, pacmanGridY, pacmanGridX, levelCfg.ghostWeight, rng);
+                Direction rawDir = m_dir;
+                if (m_controller) {
+                    rawDir = IsEaten()
+                        ? m_controller->ChooseEatenDirection(*this, ctx)
+                        : m_controller->ChooseDirection(*this, ctx);
+                }
+                Direction newDir = SanitizeGhostDirection(ctx.maze, m_gridY, m_gridX, m_dir, rawDir);
                 if (newDir != m_dir) {
                     // Authentic corner turn pause matching 0x07FA..0x080A in v1.com:
                     // Ghost pauses for 1 tick facing old direction before turning!

@@ -3,8 +3,12 @@
 #include "rom_data.hpp"
 #include <array>
 #include <cstdint>
+#include <memory>
 
 namespace pcman {
+
+class IGhostController;
+struct GameContext;
 
 // Direction values matching original Pcman v1.com:
 // 0 = Up, 1 = Down, 2 = Left, 3 = Right
@@ -162,6 +166,8 @@ public:
     int GetGridY() const { return m_gridY; }
     int GetGridX() const { return m_gridX; }
     Direction GetDirection() const { return m_currentDir; }
+    Direction GetRequestedDirection() const { return m_requestedDir; }
+    bool IsMoving() const { return m_isMoving; }
     void SetGridPos(int gridY, int gridX, Direction dir = Direction::Up) {
         m_gridY = gridY;
         m_gridX = gridX;
@@ -201,7 +207,11 @@ public:
     Ghost(GhostType type);
 
     void Reset(int level);
+    void Update(const GameContext& ctx);
     void Update(const Maze& maze, int pacmanGridY, int pacmanGridX, const LevelConfig& levelCfg, LcgRng& rng = GlobalRandom());
+
+    void SetController(std::shared_ptr<IGhostController> controller);
+    const std::shared_ptr<IGhostController>& GetController() const { return m_controller; }
 
     void SetFrightened();
     void ClearFrightened();
@@ -216,6 +226,8 @@ public:
     int GetGridX() const { return m_gridX; }
     Direction GetDirection() const { return m_dir; }
     int GetFootFrame() const { return m_footFrame; }
+    uint8_t GetSpeedSkip() const { return m_speedSkip; }
+    uint8_t GetFlags() const { return m_flags; }
     int GetSpriteVariation(bool flashWhite) const;
     GhostType GetType() const { return m_type; }
     void SetGridPos(int gridY, int gridX, Direction dir = Direction::Up) {
@@ -230,6 +242,7 @@ public:
 
 private:
     GhostType m_type;
+    std::shared_ptr<IGhostController> m_controller;
 
     // Authentic flags matching 0x2A38 (GhostFlags::Active, Frightened, ExitingPen, InPen, EatenEyes)
     uint8_t m_flags = GhostFlags::Active;
@@ -246,8 +259,6 @@ private:
     // Authentic speed/skip counter matching 0x2A37 in Pcman v1.com:
     // 0 = normal, 1 = corner pause / intermediate, 2 = tunnel / frightened 50% speed
     uint8_t m_speedSkip = 0;
-
-    Direction ChooseDirection(const Maze& maze, int pacmanGridY, int pacmanGridX, uint8_t ghostWeight, LcgRng& rng);
 };
 
 } // namespace pcman

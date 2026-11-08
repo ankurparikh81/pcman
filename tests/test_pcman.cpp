@@ -1,6 +1,7 @@
 #include "rom_data.hpp"
 #include "maze.hpp"
 #include "entities.hpp"
+#include "controllers.hpp"
 #include "game.hpp"
 #include <iostream>
 #include <cassert>
@@ -706,6 +707,117 @@ void TestGameStateMachine() {
     std::cout << "  -> All Game State Machine checks passed!\n";
 }
 
+void TestPluggableControllers() {
+    std::cout << "[Test] Validating Pluggable AI Controllers for Pac-Man and Individual Ghosts...\n";
+
+    // 1. Custom stateful Pac-Man AI controller with OnReset() lifecycle hook:
+    class PelletSeekerPacmanAI : public IPacmanController {
+    public:
+        int resetCount = 0;
+        int decisionCalls = 0;
+
+        void OnReset() override {
+            resetCount++;
+        }
+
+        Direction ChooseDirection(const Pacman& self, const GameContext& ctx) override {
+            decisionCalls++;
+            int gy = self.GetGridY();
+            int gx = self.GetGridX();
+            if (!IsAtGridIntersection(gy, gx)) {
+                return self.GetDirection();
+            }
+
+            // Prefer any walkable neighbor that has a dot/energizer, otherwise any non-reverse walkable direction
+            Direction curDir = self.GetDirection();
+            Direction oppDir = Opposite(curDir);
+            Direction bestFallback = Direction::None;
+
+            for (int d = 0; d < 4; ++d) {
+                Direction cand = static_cast<Direction>(d);
+                if (!CanMoveInDirection(ctx.maze, gy, gx, cand)) continue;
+
+                int nr = (gy / 2) + DeltaRow(cand);
+                int nc = (gx / 2) + DeltaCol(cand);
+                uint8_t cell = ctx.maze.GetCell(nr, nc);
+                if (cell == 2 || cell == 3) {
+                    return cand;
+                }
+                if (cand != oppDir && bestFallback == Direction::None) {
+                    bestFallback = cand;
+                }
+            }
+            return (bestFallback != Direction::None) ? bestFallback : oppDir;
+        }
+    };
+
+    Game game;
+    auto pacAI = std::make_shared<PelletSeekerPacmanAI>();
+    game.SetPacmanController(pacAI);
+    game.StartNewGame();
+    game.SetState(GameState::Playing);
+    assert(pacAI->resetCount == 1);
+
+    int initialScore = game.GetScore();
+    int initialDots = game.GetMaze().GetRemainingDots();
+    for (int t = 0; t < 60 && game.GetState() == GameState::Playing; ++t) {
+        game.Tick18Hz();
+    }
+    assert(pacAI->decisionCalls > 0);
+    assert(game.GetScore() > initialScore);
+    assert(game.GetMaze().GetRemainingDots() < initialDots);
+    std::cout << "  - Autonomous Pac-Man AI controller navigated maze and scored "
+              << game.GetScore() << " pts across 60 ticks!\n";
+
+    // 2. Per-character Ghost controllers (distinct strategies for Blinky vs Pinky vs Inky):
+    bool blinkyCalled = false;
+    bool pinkyCalled = false;
+
+    // Place Blinky and Pinky active at intersection (22, 14) where Up, Down, Right are walkable
+    game.GetGhost(GhostType::Blinky).SetGridPos(22, 14, Direction::Up);
+    game.GetGhost(GhostType::Pinky).SetGridPos(22, 14, Direction::Up);
+
+    // Blinky uses a lambda controller that always picks Up
+    game.SetGhostController(GhostType::Blinky, [&](const Ghost& self, const GameContext& ctx) {
+        blinkyCalled = true;
+        assert(self.GetType() == GhostType::Blinky);
+        assert(ctx.ghosts != nullptr);
+        return Direction::Up;
+    });
+
+    // Pinky uses a lambda controller that always picks Right
+    game.SetGhostController(GhostType::Pinky, [&](const Ghost& self, const GameContext& ctx) {
+        pinkyCalled = true;
+        assert(self.GetType() == GhostType::Pinky);
+        assert(ctx.ghosts != nullptr);
+        return Direction::Right;
+    });
+
+    // Run 2 ticks (1st tick buffers corner turn pause for Pinky, 2nd tick executes turn)
+    game.Tick18Hz();
+    game.Tick18Hz();
+    assert(blinkyCalled && pinkyCalled);
+    assert(game.GetGhost(GhostType::Blinky).GetDirection() == Direction::Up);
+    assert(game.GetGhost(GhostType::Pinky).GetDirection() == Direction::Right);
+    std::cout << "  - Verified independent per-ghost controllers (Blinky -> Up, Pinky -> Right)!\n";
+
+    // 3. Guardrail validation (SanitizeGhostDirection):
+    // At intersection (22, 14) facing Up: Left is a wall, Down is an illegal 180-degree reversal.
+    const Maze& maze = game.GetMaze();
+    assert(!CanMoveInDirection(maze, 22, 14, Direction::Left));
+    assert(CanMoveInDirection(maze, 22, 14, Direction::Up));
+    assert(CanMoveInDirection(maze, 22, 14, Direction::Right));
+    assert(CanMoveInDirection(maze, 22, 14, Direction::Down));
+
+    // Attempting to walk into Left wall falls back to continuing straight (Up)
+    assert(SanitizeGhostDirection(maze, 22, 14, Direction::Up, Direction::Left) == Direction::Up);
+    // Attempting a 180 reversal (Down) when Up/Right are open is blocked and continues straight (Up)
+    assert(SanitizeGhostDirection(maze, 22, 14, Direction::Up, Direction::Down) == Direction::Up);
+    std::cout << "  - Verified SanitizeGhostDirection blocks wall moves and illegal 180 reversals!\n";
+
+    std::cout << "  -> All Pluggable Controller checks passed!\n";
+}
+
 int main() {
     std::cout << "=== Running PC-Man Unit Tests ===\n";
     TestRomData();
@@ -721,6 +833,7 @@ int main() {
     TestLevelTransition();
     TestPcSpeakerSynth();
     TestGameStateMachine();
+    TestPluggableControllers();
     std::cout << "=== All Unit Tests Passed Successfully! ===\n";
     return 0;
 }

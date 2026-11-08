@@ -10,6 +10,7 @@ set(CORE_SOURCES
     src/pc_speaker.cpp
     src/maze.cpp
     src/entities.cpp
+    src/controllers.cpp
     src/game.cpp
 )
 

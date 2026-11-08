@@ -27,6 +27,55 @@ void Game::Close() {
     m_renderer.Close();
 }
 
+void Game::SetPacmanController(std::shared_ptr<IPacmanController> controller) {
+    m_pacmanController = controller ? std::move(controller) : MakeHumanPacmanController();
+}
+
+void Game::SetPacmanController(FnPacmanController::Fn fn) {
+    SetPacmanController(std::make_shared<FnPacmanController>(std::move(fn)));
+}
+
+void Game::SetGhostController(GhostType type, std::shared_ptr<IGhostController> controller) {
+    SetGhostController(static_cast<size_t>(type), std::move(controller));
+}
+
+void Game::SetGhostController(GhostType type, FnGhostController::Fn fn) {
+    SetGhostController(type, std::make_shared<FnGhostController>(std::move(fn)));
+}
+
+void Game::SetGhostController(size_t index, std::shared_ptr<IGhostController> controller) {
+    if (index < m_ghosts.size()) {
+        m_ghosts[index].SetController(std::move(controller));
+    }
+}
+
+void Game::SetAllGhostControllers(std::shared_ptr<IGhostController> controller) {
+    for (auto& g : m_ghosts) {
+        g.SetController(controller);
+    }
+}
+
+void Game::SetAllGhostControllers(FnGhostController::Fn fn) {
+    SetAllGhostControllers(std::make_shared<FnGhostController>(std::move(fn)));
+}
+
+GameContext Game::MakeContext(LcgRng& rng) const {
+    return GameContext{
+        .maze = m_maze,
+        .pacman = m_pacman,
+        .ghosts = &m_ghosts,
+        .levelConfig = RomData::GetLevelConfig(m_level),
+        .level = m_level,
+        .score = m_score,
+        .lives = m_lives,
+        .frightTimer = m_frightTimer,
+        .fruitActive = m_fruitActive,
+        .fruitTimer = m_fruitTimer,
+        .input = m_pendingInput,
+        .rng = rng
+    };
+}
+
 void Game::StartNewGame() {
     ResetGlobalRandom(0);
     m_score = 0;
@@ -39,6 +88,10 @@ void Game::StartNewGame() {
 
 void Game::StartNewRound() {
     m_pacman.Reset();
+    if (m_pacmanController) {
+        m_pacmanController->OnReset();
+    }
+    m_pendingInput = InputState{};
     for (auto& g : m_ghosts) {
         g.Reset(m_level);
     }
@@ -113,6 +166,7 @@ void Game::ApplyInput(const InputState& input) {
     }
 
     if (m_state == GameState::Playing && input.desiredDir != Direction::None) {
+        m_pendingInput.desiredDir = input.desiredDir;
         m_pacman.SetRequestedDirection(input.desiredDir);
     }
 }
@@ -198,7 +252,15 @@ void Game::Tick18Hz() {
 
     // 2. Pac-Man moves ONLY if no dot was eaten this tick (matching 0x073D & 0x0743 skip in v1.com)
     if (!dotEatenThisTick) {
+        if (m_pacmanController) {
+            GameContext pacCtx = MakeContext();
+            Direction dir = m_pacmanController->ChooseDirection(m_pacman, pacCtx);
+            if (dir != Direction::None) {
+                m_pacman.SetRequestedDirection(dir);
+            }
+        }
         m_pacman.Update(m_maze);
+        m_pendingInput.desiredDir = Direction::None;
     }
 
     if (m_score > m_highScore) {
@@ -251,14 +313,14 @@ void Game::Tick18Hz() {
     }
 
     // 3. Update Ghosts & check collisions
-    auto cfg = RomData::GetLevelConfig(m_level);
     int pacY = m_pacman.GetGridY();
     int pacX = m_pacman.GetGridX();
+    GameContext ghostCtx = MakeContext();
 
     // Authentic reverse index update matching 0x07AF (Clyde -> Inky -> Pinky -> Blinky):
     for (int i = static_cast<int>(m_ghosts.size()) - 1; i >= 0; --i) {
         auto& g = m_ghosts[i];
-        g.Update(m_maze, pacY, pacX, cfg);
+        g.Update(ghostCtx);
 
         // Authentic Manhattan distance collision check (|dY| + |dX| <= 2)
         if (g.CheckCollision(pacY, pacX)) {
