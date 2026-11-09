@@ -1,7 +1,7 @@
 UNAME_S := $(shell uname -s 2>/dev/null || echo Windows_NT)
 
 CXX ?= g++
-CXXFLAGS = -std=c++20 -Wall -Wextra -O2 -Isrc
+CXXFLAGS = -std=c++20 -Wall -Wextra -O2 -MMD -MP -Isrc
 
 ifeq ($(UNAME_S),Darwin)
     # macOS (Apple Silicon / Intel)
@@ -30,7 +30,9 @@ CORE_SRCS = src/cga_renderer.cpp \
             src/maze.cpp \
             src/entities.cpp \
             src/controllers.cpp \
+            src/pathfinder.cpp \
             src/serialization.cpp \
+            src/benchmark.cpp \
             src/game.cpp
 
 SRCS = src/main.cpp $(CORE_SRCS)
@@ -53,7 +55,9 @@ test: $(TARGET) tests/test_pcman
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(OBJS) $(TARGET) tests/test_pcman pcman.exe
+	rm -f $(OBJS) $(OBJS:.o=.d) $(TARGET) tests/test_pcman tests/test_pcman.d pcman.exe
+
+-include $(OBJS:.o=.d) tests/test_pcman.d
 
 compdb compile_commands.json:
 	@python3 scripts/gen_compdb.py

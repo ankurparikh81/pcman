@@ -2,7 +2,9 @@
 #include "maze.hpp"
 #include "entities.hpp"
 #include "controllers.hpp"
+#include "pathfinder.hpp"
 #include "serialization.hpp"
+#include "benchmark.hpp"
 #include "game.hpp"
 #include <iostream>
 #include <sstream>
@@ -723,25 +725,23 @@ void TestPluggableControllers() {
             resetCount++;
         }
 
-        Direction ChooseDirection(const Pacman& self, const GameContext& ctx) override {
+        Direction ChooseDirection(const Pacman& self,
+                                  const GameContext& ctx,
+                                  const LegalActions& legalActions) override {
             decisionCalls++;
             int gy = self.GetGridY();
             int gx = self.GetGridX();
-            if (!IsAtGridIntersection(gy, gx)) {
-                return self.GetDirection();
-            }
-
-            // Prefer any walkable neighbor that has a dot/energizer, otherwise any non-reverse walkable direction
             Direction curDir = self.GetDirection();
             Direction oppDir = Opposite(curDir);
+
+            // Base intersection from which perpendicular turns in legalActions branch
+            int baseY = IsAtGridIntersection(gy, gx) ? gy : WrapTunnelGridY(gy + DeltaRow(curDir));
+            int baseX = IsAtGridIntersection(gy, gx) ? gx : (gx + DeltaCol(curDir));
             Direction bestFallback = Direction::None;
 
-            for (int d = 0; d < 4; ++d) {
-                Direction cand = static_cast<Direction>(d);
-                if (!CanMoveInDirection(ctx.maze, gy, gx, cand)) continue;
-
-                int nr = (gy / 2) + DeltaRow(cand);
-                int nc = (gx / 2) + DeltaCol(cand);
+            for (Direction cand : legalActions) {
+                int nr = (baseY / 2) + DeltaRow(cand);
+                int nc = (baseX / 2) + DeltaCol(cand);
                 uint8_t cell = ctx.maze.GetCell(nr, nc);
                 if (cell == 2 || cell == 3) {
                     return cand;
@@ -766,11 +766,12 @@ void TestPluggableControllers() {
     for (int t = 0; t < 60 && game.GetState() == GameState::Playing; ++t) {
         game.Tick18Hz();
     }
-    assert(pacAI->decisionCalls > 0);
+    // At 3-tick (~6.07 Hz) polling cadence, 60 ticks triggers exactly 20 controller polls!
+    assert(pacAI->decisionCalls == 20);
     assert(game.GetScore() > initialScore);
     assert(game.GetMaze().GetRemainingDots() < initialDots);
-    std::cout << "  - Autonomous Pac-Man AI controller navigated maze and scored "
-              << game.GetScore() << " pts across 60 ticks!\n";
+    std::cout << "  - Autonomous Pac-Man AI polled " << pacAI->decisionCalls
+              << " times across 60 ticks (~6.07 Hz) and scored " << game.GetScore() << " pts!\n";
 
     // 2. Per-character Ghost controllers (distinct strategies for Blinky vs Pinky vs Inky):
     bool blinkyCalled = false;
@@ -920,6 +921,144 @@ void TestGameStateSerialization() {
     std::cout << "  -> All Game State Serialization checks passed!\n";
 }
 
+void TestRandomBaselineAndBenchmark() {
+    std::cout << "[Test] Validating LegalActions, Random Baselines, and Headless Batch Benchmark...\n";
+
+    Maze maze;
+    Pacman pacman;
+    // 1. At intersection (22, 14) facing Up: Up, Down (reverse), and Right are walkable; Left is a wall
+    pacman.SetGridPos(22, 14, Direction::Up);
+    LegalActions pacIntersectionLegal = GetPacmanLegalActions(maze, pacman);
+    assert(pacIntersectionLegal.Size() == 3);
+    assert(pacIntersectionLegal.Contains(Direction::Up));
+    assert(pacIntersectionLegal.Contains(Direction::Down)); // Pac-Man CAN reverse at intersections
+    assert(pacIntersectionLegal.Contains(Direction::Right));
+    assert(!pacIntersectionLegal.Contains(Direction::Left));
+
+    // 2. Midway through a corridor:
+    // 2a. At (25, 14) facing Up (1 step before (24, 14) where Left and Right are walls):
+    //     Only Up and Down (180° mid-corridor reverse) are legal.
+    pacman.SetGridPos(25, 14, Direction::Up);
+    LegalActions pacMidStraightLegal = GetPacmanLegalActions(maze, pacman);
+    assert(pacMidStraightLegal.Size() == 2);
+    assert(pacMidStraightLegal.Contains(Direction::Up));
+    assert(pacMidStraightLegal.Contains(Direction::Down));
+
+    // 2b. At (23, 14) facing Up (1 step before intersection (22, 14) where Right is open):
+    //     Pac-Man can continue Up, reverse 180° Down, OR pre-buffer Right for (22, 14)!
+    pacman.SetGridPos(23, 14, Direction::Up);
+    LegalActions pacMidCornerLegal = GetPacmanLegalActions(maze, pacman);
+    assert(pacMidCornerLegal.Size() == 3);
+    assert(pacMidCornerLegal.Contains(Direction::Up));
+    assert(pacMidCornerLegal.Contains(Direction::Down));
+    assert(pacMidCornerLegal.Contains(Direction::Right));
+    assert(!pacMidCornerLegal.Contains(Direction::Left));
+
+    // 3. Ghost at intersection (22, 14) facing Up: Down is forbidden (180 reversal), Left is wall -> only Up, Right!
+    Ghost blinky(GhostType::Blinky);
+    blinky.SetGridPos(22, 14, Direction::Up);
+    LegalActions ghostIntersectionLegal = GetGhostLegalActions(maze, blinky);
+    assert(ghostIntersectionLegal.Size() == 2);
+    assert(ghostIntersectionLegal.Contains(Direction::Up));
+    assert(ghostIntersectionLegal.Contains(Direction::Right));
+    assert(!ghostIntersectionLegal.Contains(Direction::Down)); // Ghost CANNOT reverse at intersections
+    assert(!ghostIntersectionLegal.Contains(Direction::Left));
+
+    // 4. Ghost midway through a corridor (23, 14) facing Up: only continuing Up is legal!
+    blinky.SetGridPos(23, 14, Direction::Up);
+    LegalActions ghostMidCorridorLegal = GetGhostLegalActions(maze, blinky);
+    assert(ghostMidCorridorLegal.Size() == 1);
+    assert(ghostMidCorridorLegal[0] == Direction::Up); // Ghost CANNOT reverse midway in a corridor!
+    std::cout << "  - Verified Pac-Man legal moves allow mid-corridor and intersection reversals!\n";
+    std::cout << "  - Verified Ghost legal moves strictly prohibit mid-corridor and intersection reversals!\n";
+
+    // Verify Headless Benchmark Runner with per-character controller configuration
+    BenchmarkConfig cfg{};
+    cfg.pacmanStrategy = "random";
+    cfg.ghostStrategies = { "original", "random", "random", "original" };
+    cfg.episodes = 10;
+    cfg.maxTicksPerEpisode = 2000;
+    cfg.baseSeed = 1234;
+    cfg.startLevel = 1;
+
+    BenchmarkSummary run1 = RunBenchmark(cfg);
+    BenchmarkSummary run2 = RunBenchmark(cfg);
+
+    assert(run1.episodes.size() == 10);
+    assert(run1.meanScore > 0.0);
+    assert(run1.meanDotsEaten > 0.0);
+    // Exact determinism across repeated benchmark runs with the same baseSeed
+    assert(run1.meanScore == run2.meanScore);
+    assert(run1.minScore == run2.minScore);
+    assert(run1.maxScore == run2.maxScore);
+    assert(run1.meanTicks == run2.meanTicks);
+    std::cout << "  - Verified deterministic 10-episode headless benchmark (meanScore="
+              << run1.meanScore << ", meanDots=" << run1.meanDotsEaten << ")!\n";
+    std::cout << "  -> All Random Baseline and Benchmark checks passed!\n";
+}
+
+void TestMazePathfinder() {
+    std::cout << "[Test] Validating Directed (No-180-Reversal) vs Reversible Maze BFS Pathfinder...\n";
+    Maze maze;
+
+    // 1. Directed vs Reversible Asymmetry (Ghost motion vector rule):
+    // Target is at (24, 14). Entity is at (22, 14) (2 grid units above target).
+    // - If Ghost is facing Down (toward target): directed path is 2 steps (firstAction = Down).
+    auto ghostToward = FindDirectedShortestPath(maze, 22, 14, Direction::Down, 24, 14);
+    assert(ghostToward.distance == 2);
+    assert(ghostToward.firstAction == Direction::Down);
+
+    // - If Ghost is facing Up (away from target): Ghost CANNOT turn 180° Down!
+    //   It must continue Up or Right and loop around a maze block (> 20 steps).
+    auto ghostAway = FindDirectedShortestPath(maze, 22, 14, Direction::Up, 24, 14);
+    assert(ghostAway.distance > 20);
+    assert(ghostAway.firstAction != Direction::Down);
+
+    // - Meanwhile, Pac-Man at (22, 14) facing Up CAN reverse 180° Down in 2 steps!
+    Pacman pac;
+    pac.SetGridPos(22, 14, Direction::Up);
+    LegalActions pacLegal = GetPacmanLegalActions(maze, pac);
+    auto pacReverse = FindPacmanShortestPath(maze, pac, pacLegal, 24, 14);
+    assert(pacReverse.distance == 2);
+    assert(pacReverse.firstAction == Direction::Down);
+    std::cout << "  - Verified Directed vs Reversible asymmetry at (22, 14) -> (24, 14): "
+              << "Ghost(Down)=" << ghostToward.distance << " steps, "
+              << "Ghost(Up)=" << ghostAway.distance << " steps (loop), "
+              << "Pac-Man(Up)=" << pacReverse.distance << " steps (180 reverse)!\n";
+
+    // 2. DirectedDistanceMap matches FindDirectedShortestPath across the maze:
+    DirectedDistanceMap dmap;
+    dmap.ComputeFrom(maze, 22, 14, Direction::Up);
+    assert(dmap.GetDistance(22, 14) == 0);
+    assert(dmap.GetDistance(24, 14) == ghostAway.distance);
+    assert(dmap.GetDistance(20, 14) == 2);
+
+    // 3. Vertical wrap-around tunnel shortest path:
+    // From top of tunnel (2, 32) facing Up to bottom of tunnel (56, 32):
+    // Steps: (2, 32) -> (1, 32) -> (0, 32) -> (57, 32) -> (56, 32) = 4 steps!
+    auto tunnelWrap = FindDirectedShortestPath(maze, 2, 32, Direction::Up, 56, 32);
+    assert(tunnelWrap.distance == 4);
+    assert(tunnelWrap.firstAction == Direction::Up);
+    std::cout << "  - Verified vertical wrap-around tunnel BFS shortest path (4 steps across top->bottom wrap)!\n";
+
+    // 4. FindNearestDotForPacman with mid-corridor corner pre-buffering:
+    // Place Pac-Man at (23, 14) facing Up (1 step before intersection (22, 14)).
+    // Eat the dots at (24, 14), (22, 14), and (20, 14) so the nearest remaining dot is to the Right at (22, 16)!
+    maze.CheckAndEatDotAtGrid(24, 14);
+    maze.CheckAndEatDotAtGrid(22, 14);
+    maze.CheckAndEatDotAtGrid(20, 14);
+    pac.SetGridPos(23, 14, Direction::Up);
+    LegalActions midLegal = GetPacmanLegalActions(maze, pac);
+    assert(midLegal.Contains(Direction::Right)); // Pre-buffered corner turn
+    auto nearestDot = FindNearestDotForPacman(maze, pac, midLegal);
+    assert(nearestDot.firstAction == Direction::Right);
+    assert(nearestDot.targetGridY == 22 && nearestDot.targetGridX == 16);
+    assert(nearestDot.distance == 3); // (23,14) -> (22,14) -> (22,15) -> (22,16)
+    std::cout << "  - Verified FindNearestDotForPacman selects pre-buffered Right turn at (23, 14) to reach dot at (22, 16) in 3 steps!\n";
+
+    std::cout << "  -> All Maze Pathfinder checks passed!\n";
+}
+
 int main() {
     std::cout << "=== Running PC-Man Unit Tests ===\n";
     TestRomData();
@@ -937,6 +1076,8 @@ int main() {
     TestGameStateMachine();
     TestPluggableControllers();
     TestGameStateSerialization();
+    TestRandomBaselineAndBenchmark();
+    TestMazePathfinder();
     std::cout << "=== All Unit Tests Passed Successfully! ===\n";
     return 0;
 }

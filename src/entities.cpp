@@ -295,9 +295,10 @@ void Ghost::Update(const GameContext& ctx) {
             if (IsAtGridIntersection(m_gridY, m_gridX)) {
                 Direction rawDir = m_dir;
                 if (m_controller) {
+                    LegalActions legal = GetGhostLegalActions(ctx.maze, *this);
                     rawDir = IsEaten()
-                        ? m_controller->ChooseEatenDirection(*this, ctx)
-                        : m_controller->ChooseDirection(*this, ctx);
+                        ? m_controller->ChooseEatenDirection(*this, ctx, legal)
+                        : m_controller->ChooseDirection(*this, ctx, legal);
                 }
                 Direction newDir = SanitizeGhostDirection(ctx.maze, m_gridY, m_gridX, m_dir, rawDir);
                 if (newDir != m_dir) {

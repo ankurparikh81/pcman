@@ -243,6 +243,7 @@ std::vector<uint8_t> SerializeSnapshot(const GameSnapshot& snapshot) {
     pw.WriteF32(snapshot.tickAccumulator);
     pw.WriteI32(snapshot.frightTimer);
     pw.WriteU8(static_cast<uint8_t>(snapshot.pendingInputDir));
+    pw.WriteU8(snapshot.pacmanPollTimer);
 
     uint32_t checksum = ComputeFnv1a32(payload);
 
@@ -342,7 +343,8 @@ bool DeserializeSnapshot(std::span<const uint8_t> bytes, GameSnapshot& outSnapsh
         !pr.ReadF32(s.stateTimer) ||
         !pr.ReadF32(s.tickAccumulator) ||
         !pr.ReadI32(s.frightTimer) ||
-        !pr.ReadU8(pendingDir)) {
+        !pr.ReadU8(pendingDir) ||
+        !pr.ReadU8(s.pacmanPollTimer)) {
         return false;
     }
     s.state = static_cast<GameState>(stateVal);

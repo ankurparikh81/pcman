@@ -80,6 +80,7 @@ struct GameSnapshot {
     float tickAccumulator = 0.0f;
     int32_t frightTimer = 0;
     Direction pendingInputDir = Direction::None;
+    uint8_t pacmanPollTimer = 0;
 
     bool operator==(const GameSnapshot&) const = default;
 };

@@ -3,10 +3,49 @@
 #include "maze.hpp"
 #include "rom_data.hpp"
 #include <array>
+#include <cstdint>
 #include <functional>
 #include <memory>
+#include <string_view>
 
 namespace pcman {
+
+// Identifier for each of the 5 controllable characters in the game
+enum class CharacterId : uint8_t {
+    Pacman = 0,
+    Blinky = 1,
+    Pinky  = 2,
+    Inky   = 3,
+    Clyde  = 4
+};
+
+// Fixed-capacity set of legal directional key inputs (Up, Down, Left, Right)
+// available to a character at a given game state.
+struct LegalActions {
+    std::array<Direction, 4> actions{
+        Direction::None, Direction::None, Direction::None, Direction::None
+    };
+    uint8_t count = 0;
+
+    constexpr void Add(Direction d) {
+        if (count < 4 && !Contains(d)) {
+            actions[count++] = d;
+        }
+    }
+
+    [[nodiscard]] constexpr bool Contains(Direction d) const {
+        for (uint8_t i = 0; i < count; ++i) {
+            if (actions[i] == d) return true;
+        }
+        return false;
+    }
+
+    [[nodiscard]] constexpr bool Empty() const { return count == 0; }
+    [[nodiscard]] constexpr uint8_t Size() const { return count; }
+    constexpr Direction operator[](size_t i) const { return actions[i]; }
+    [[nodiscard]] constexpr auto begin() const { return actions.begin(); }
+    [[nodiscard]] constexpr auto end() const { return actions.begin() + count; }
+};
 
 // Platform-independent frame input state
 struct InputState {
@@ -46,6 +85,17 @@ inline bool CanMoveInDirection(const Maze& maze, int gridY, int gridX, Direction
     return maze.IsWalkable(nextRow, nextCol);
 }
 
+// Compute the legal directional key inputs available to Pac-Man at his current position.
+// At intersections, returns all walkable directions {Up, Down, Left, Right} (including reversing).
+// Midway through a corridor, returns {currentDir, Opposite(currentDir)} plus any perpendicular
+// turns open at the intersection 1 step ahead so turns can be pre-buffered at ~6 Hz polling.
+LegalActions GetPacmanLegalActions(const Maze& maze, const Pacman& pacman);
+
+// Compute the legal directional key inputs available to a Ghost at its current position.
+// At intersections, returns all walkable non-reverse directions (or reverse at a dead end).
+// Mid-corridor or in/exiting pen, returns {currentDir}.
+LegalActions GetGhostLegalActions(const Maze& maze, const Ghost& ghost);
+
 // Helper: validate/sanitize a proposed ghost direction at an intersection.
 // Enforces wall collision and the no-180-reversal rule (unless at a dead end).
 Direction SanitizeGhostDirection(const Maze& maze, int gridY, int gridX,
@@ -54,40 +104,68 @@ Direction SanitizeGhostDirection(const Maze& maze, int gridY, int gridX,
 class IPacmanController {
 public:
     virtual ~IPacmanController() = default;
-    virtual Direction ChooseDirection(const Pacman& self, const GameContext& ctx) = 0;
+    virtual Direction ChooseDirection(const Pacman& self,
+                                      const GameContext& ctx,
+                                      const LegalActions& legalActions) = 0;
     virtual void OnReset() {}
 };
 
 class IGhostController {
 public:
     virtual ~IGhostController() = default;
-    virtual Direction ChooseDirection(const Ghost& self, const GameContext& ctx) = 0;
-    virtual Direction ChooseEatenDirection(const Ghost& self, const GameContext& ctx);
+    virtual Direction ChooseDirection(const Ghost& self,
+                                      const GameContext& ctx,
+                                      const LegalActions& legalActions) = 0;
+    virtual Direction ChooseEatenDirection(const Ghost& self,
+                                           const GameContext& ctx,
+                                           const LegalActions& legalActions);
     virtual void OnReset() {}
 };
 
 // Default Pac-Man controller driven by InputState (keyboard/gamepad/test input)
 class HumanPacmanController : public IPacmanController {
 public:
-    Direction ChooseDirection(const Pacman& self, const GameContext& ctx) override;
+    Direction ChooseDirection(const Pacman& self,
+                              const GameContext& ctx,
+                              const LegalActions& legalActions) override;
 };
 
-// Functional wrapper for quick lambda-based Pac-Man AI strategies
+// Baseline Pac-Man controller that chooses uniformly at random from legalActions
+class RandomPacmanController : public IPacmanController {
+public:
+    Direction ChooseDirection(const Pacman& self,
+                              const GameContext& ctx,
+                              const LegalActions& legalActions) override;
+};
+
+// Functional wrapper for lambda-based Pac-Man AI strategies
 class FnPacmanController : public IPacmanController {
 public:
-    using Fn = std::function<Direction(const Pacman&, const GameContext&)>;
-    explicit FnPacmanController(Fn fn) : m_fn(std::move(fn)) {}
-    Direction ChooseDirection(const Pacman& self, const GameContext& ctx) override {
-        return m_fn ? m_fn(self, ctx) : Direction::None;
+    using FnWithLegal = std::function<Direction(const Pacman&, const GameContext&, const LegalActions&)>;
+    using FnSimple    = std::function<Direction(const Pacman&, const GameContext&)>;
+
+    explicit FnPacmanController(FnWithLegal fn) : m_fn(std::move(fn)) {}
+    explicit FnPacmanController(FnSimple fn)
+        : m_fn([f = std::move(fn)](const Pacman& self, const GameContext& ctx, const LegalActions&) {
+              return f ? f(self, ctx) : Direction::None;
+          }) {}
+
+    Direction ChooseDirection(const Pacman& self,
+                              const GameContext& ctx,
+                              const LegalActions& legalActions) override {
+        return m_fn ? m_fn(self, ctx, legalActions) : Direction::None;
     }
+
 private:
-    Fn m_fn;
+    FnWithLegal m_fn;
 };
 
 // Authentic Pcman v1.com (1982) roulette-wheel Ghost AI controller
 class OriginalGhostController : public IGhostController {
 public:
-    Direction ChooseDirection(const Ghost& self, const GameContext& ctx) override;
+    Direction ChooseDirection(const Ghost& self,
+                              const GameContext& ctx,
+                              const LegalActions& legalActions) override;
 
     static Direction ComputeOriginalDirection(const Ghost& self, const Maze& maze,
                                               int targetGridY, int targetGridX,
@@ -95,19 +173,45 @@ public:
                                               LcgRng& rng);
 };
 
-// Functional wrapper for quick lambda-based Ghost AI strategies
+// Baseline Ghost controller that chooses uniformly at random from legalActions
+class RandomGhostController : public IGhostController {
+public:
+    Direction ChooseDirection(const Ghost& self,
+                              const GameContext& ctx,
+                              const LegalActions& legalActions) override;
+};
+
+// Functional wrapper for lambda-based Ghost AI strategies
 class FnGhostController : public IGhostController {
 public:
-    using Fn = std::function<Direction(const Ghost&, const GameContext&)>;
-    explicit FnGhostController(Fn fn) : m_fn(std::move(fn)) {}
-    Direction ChooseDirection(const Ghost& self, const GameContext& ctx) override {
-        return m_fn ? m_fn(self, ctx) : self.GetDirection();
+    using FnWithLegal = std::function<Direction(const Ghost&, const GameContext&, const LegalActions&)>;
+    using FnSimple    = std::function<Direction(const Ghost&, const GameContext&)>;
+
+    explicit FnGhostController(FnWithLegal fn) : m_fn(std::move(fn)) {}
+    explicit FnGhostController(FnSimple fn)
+        : m_fn([f = std::move(fn)](const Ghost& self, const GameContext& ctx, const LegalActions&) {
+              return f ? f(self, ctx) : self.GetDirection();
+          }) {}
+
+    Direction ChooseDirection(const Ghost& self,
+                              const GameContext& ctx,
+                              const LegalActions& legalActions) override {
+        return m_fn ? m_fn(self, ctx, legalActions) : self.GetDirection();
     }
+
 private:
-    Fn m_fn;
+    FnWithLegal m_fn;
 };
 
 std::shared_ptr<IPacmanController> MakeHumanPacmanController();
+std::shared_ptr<IPacmanController> MakeRandomPacmanController();
 std::shared_ptr<IGhostController> MakeOriginalGhostController();
+std::shared_ptr<IGhostController> MakeRandomGhostController();
+
+// Factory lookup by name:
+// Pac-Man names: "human", "random" (returns nullptr if unknown)
+// Ghost names:   "original", "random" (returns nullptr if unknown)
+std::shared_ptr<IPacmanController> CreatePacmanControllerByName(std::string_view name);
+std::shared_ptr<IGhostController> CreateGhostControllerByName(std::string_view name);
 
 } // namespace pcman

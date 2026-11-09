@@ -43,15 +43,22 @@ public:
     void Render();
 
     // Controller injection API for Pac-Man and individual Ghosts
+    static constexpr int PACMAN_POLL_INTERVAL_TICKS = 3; // 3 ticks @ 18.2065Hz = ~164.8ms (~6.07Hz)
+
     void SetPacmanController(std::shared_ptr<IPacmanController> controller);
-    void SetPacmanController(FnPacmanController::Fn fn);
+    void SetPacmanController(FnPacmanController::FnWithLegal fn);
+    void SetPacmanController(FnPacmanController::FnSimple fn);
     const std::shared_ptr<IPacmanController>& GetPacmanController() const { return m_pacmanController; }
+    void SetPacmanPollInterval(int ticks) { m_pacmanPollInterval = (ticks > 0) ? ticks : 1; }
+    int GetPacmanPollInterval() const { return m_pacmanPollInterval; }
 
     void SetGhostController(GhostType type, std::shared_ptr<IGhostController> controller);
-    void SetGhostController(GhostType type, FnGhostController::Fn fn);
+    void SetGhostController(GhostType type, FnGhostController::FnWithLegal fn);
+    void SetGhostController(GhostType type, FnGhostController::FnSimple fn);
     void SetGhostController(size_t index, std::shared_ptr<IGhostController> controller);
     void SetAllGhostControllers(std::shared_ptr<IGhostController> controller);
-    void SetAllGhostControllers(FnGhostController::Fn fn);
+    void SetAllGhostControllers(FnGhostController::FnWithLegal fn);
+    void SetAllGhostControllers(FnGhostController::FnSimple fn);
 
     // Game state accessors & simulation for testing
     int GetScore() const { return m_score; }
@@ -75,7 +82,7 @@ public:
     const CgaRenderer& GetRenderer() const { return m_renderer; }
     PcSpeaker& GetSpeaker() { return m_speaker; }
     const PcSpeaker& GetSpeaker() const { return m_speaker; }
-    void StartNewGame();
+    void StartNewGame(int startLevel = 1, uint16_t seed = 0);
     void Tick18Hz();
 
     // State snapshotting & binary serialization
@@ -94,6 +101,8 @@ private:
     Pacman m_pacman;
     std::shared_ptr<IPacmanController> m_pacmanController = MakeHumanPacmanController();
     InputState m_pendingInput{};
+    int m_pacmanPollInterval = PACMAN_POLL_INTERVAL_TICKS;
+    int m_pacmanPollTimer = 0;
     std::array<Ghost, 4> m_ghosts{
         Ghost(GhostType::Blinky),
         Ghost(GhostType::Pinky),

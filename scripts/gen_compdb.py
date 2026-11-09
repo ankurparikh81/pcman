@@ -12,7 +12,9 @@ def main():
         "src/maze.cpp",
         "src/entities.cpp",
         "src/controllers.cpp",
+        "src/pathfinder.cpp",
         "src/serialization.cpp",
+        "src/benchmark.cpp",
         "src/game.cpp",
         "tests/test_pcman.cpp",
     ]

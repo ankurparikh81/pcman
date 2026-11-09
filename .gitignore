@@ -1,4 +1,5 @@
 *.o
+*.d
 pcman
 pcman.exe
 tests/test_pcman

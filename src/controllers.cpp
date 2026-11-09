@@ -3,6 +3,80 @@
 
 namespace pcman {
 
+LegalActions GetPacmanLegalActions(const Maze& maze, const Pacman& pacman) {
+    LegalActions legal;
+    int gy = pacman.GetGridY();
+    int gx = pacman.GetGridX();
+
+    if (IsAtGridIntersection(gy, gx)) {
+        for (int d = 0; d < 4; ++d) {
+            Direction cand = static_cast<Direction>(d);
+            if (CanMoveInDirection(maze, gy, gx, cand)) {
+                legal.Add(cand);
+            }
+        }
+    } else {
+        // Midway through a corridor: Pac-Man can continue forward, reverse 180 degrees,
+        // or pre-buffer a perpendicular turn available at the intersection 1 step ahead.
+        Direction curDir = pacman.GetDirection();
+        if (curDir != Direction::None) {
+            legal.Add(curDir);
+            legal.Add(Opposite(curDir));
+
+            int nextY = WrapTunnelGridY(gy + DeltaRow(curDir));
+            int nextX = gx + DeltaCol(curDir);
+            if (IsAtGridIntersection(nextY, nextX)) {
+                for (int d = 0; d < 4; ++d) {
+                    Direction cand = static_cast<Direction>(d);
+                    if (cand != curDir && cand != Opposite(curDir) &&
+                        CanMoveInDirection(maze, nextY, nextX, cand)) {
+                        legal.Add(cand);
+                    }
+                }
+            }
+        }
+    }
+
+    if (legal.Empty() && pacman.GetDirection() != Direction::None) {
+        legal.Add(pacman.GetDirection());
+    }
+    return legal;
+}
+
+LegalActions GetGhostLegalActions(const Maze& maze, const Ghost& ghost) {
+    LegalActions legal;
+    Direction curDir = ghost.GetDirection();
+
+    if (ghost.IsInPen() || ghost.IsExitingPen() || !IsAtGridIntersection(ghost.GetGridY(), ghost.GetGridX())) {
+        if (curDir != Direction::None) {
+            legal.Add(curDir);
+        }
+        return legal;
+    }
+
+    int gy = ghost.GetGridY();
+    int gx = ghost.GetGridX();
+    Direction oppDir = Opposite(curDir);
+
+    // Collect all walkable non-reverse directions (Up, Down, Left, Right)
+    for (int d = 0; d < 4; ++d) {
+        Direction cand = static_cast<Direction>(d);
+        if (cand != oppDir && CanMoveInDirection(maze, gy, gx, cand)) {
+            legal.Add(cand);
+        }
+    }
+
+    // Dead end fallback: allow reversal if it is the only walkable exit
+    if (legal.Empty() && oppDir != Direction::None && CanMoveInDirection(maze, gy, gx, oppDir)) {
+        legal.Add(oppDir);
+    }
+
+    if (legal.Empty() && curDir != Direction::None) {
+        legal.Add(curDir);
+    }
+    return legal;
+}
+
 Direction SanitizeGhostDirection(const Maze& maze, int gridY, int gridX,
                                  Direction currentDir, Direction proposedDir) {
     Direction oppDir = Opposite(currentDir);
@@ -34,8 +108,25 @@ Direction SanitizeGhostDirection(const Maze& maze, int gridY, int gridX,
     return currentDir;
 }
 
-Direction HumanPacmanController::ChooseDirection(const Pacman& /*self*/, const GameContext& ctx) {
+Direction HumanPacmanController::ChooseDirection(const Pacman& /*self*/,
+                                                 const GameContext& ctx,
+                                                 const LegalActions& /*legalActions*/) {
     return ctx.input.desiredDir;
+}
+
+Direction RandomPacmanController::ChooseDirection(const Pacman& self,
+                                                  const GameContext& ctx,
+                                                  const LegalActions& legalActions) {
+    if (legalActions.Empty()) {
+        return self.GetDirection();
+    }
+    if (legalActions.Size() == 1) {
+        return legalActions[0];
+    }
+
+    uint16_t rnd = ctx.rng.Next();
+    size_t idx = static_cast<size_t>((static_cast<uint32_t>(rnd) * static_cast<uint32_t>(legalActions.Size())) >> 16);
+    return legalActions[idx];
 }
 
 // Exact translation of the 8086 Ghost AI decision function at 0x095A..0x0AFF in Pcman v1.com
@@ -128,14 +219,33 @@ Direction OriginalGhostController::ComputeOriginalDirection(const Ghost& self, c
     return Direction::Right;
 }
 
-Direction OriginalGhostController::ChooseDirection(const Ghost& self, const GameContext& ctx) {
+Direction OriginalGhostController::ChooseDirection(const Ghost& self,
+                                                   const GameContext& ctx,
+                                                   const LegalActions& /*legalActions*/) {
     return ComputeOriginalDirection(self, ctx.maze,
                                     ctx.pacman.GetGridY(), ctx.pacman.GetGridX(),
                                     ctx.levelConfig.ghostWeight, self.IsFrightened(),
                                     ctx.rng);
 }
 
-Direction IGhostController::ChooseEatenDirection(const Ghost& self, const GameContext& ctx) {
+Direction RandomGhostController::ChooseDirection(const Ghost& self,
+                                                 const GameContext& ctx,
+                                                 const LegalActions& legalActions) {
+    if (legalActions.Empty()) {
+        return self.GetDirection();
+    }
+    if (legalActions.Size() == 1) {
+        return legalActions[0];
+    }
+
+    uint16_t rnd = ctx.rng.Next();
+    size_t idx = static_cast<size_t>((static_cast<uint32_t>(rnd) * static_cast<uint32_t>(legalActions.Size())) >> 16);
+    return legalActions[idx];
+}
+
+Direction IGhostController::ChooseEatenDirection(const Ghost& self,
+                                                 const GameContext& ctx,
+                                                 const LegalActions& /*legalActions*/) {
     // Eaten eyes returning to pen entrance door at (grid_y = 26, grid_x = 38) with maximum weight 0x3C (60)
     return OriginalGhostController::ComputeOriginalDirection(
         self, ctx.maze, PEN_DOOR_GRID_Y, PEN_DOOR_GRID_X, 0x3C, false, ctx.rng);
@@ -145,8 +255,36 @@ std::shared_ptr<IPacmanController> MakeHumanPacmanController() {
     return std::make_shared<HumanPacmanController>();
 }
 
+std::shared_ptr<IPacmanController> MakeRandomPacmanController() {
+    return std::make_shared<RandomPacmanController>();
+}
+
 std::shared_ptr<IGhostController> MakeOriginalGhostController() {
     return std::make_shared<OriginalGhostController>();
+}
+
+std::shared_ptr<IGhostController> MakeRandomGhostController() {
+    return std::make_shared<RandomGhostController>();
+}
+
+std::shared_ptr<IPacmanController> CreatePacmanControllerByName(std::string_view name) {
+    if (name == "human") {
+        return MakeHumanPacmanController();
+    }
+    if (name == "random") {
+        return MakeRandomPacmanController();
+    }
+    return nullptr;
+}
+
+std::shared_ptr<IGhostController> CreateGhostControllerByName(std::string_view name) {
+    if (name == "original") {
+        return MakeOriginalGhostController();
+    }
+    if (name == "random") {
+        return MakeRandomGhostController();
+    }
+    return nullptr;
 }
 
 } // namespace pcman

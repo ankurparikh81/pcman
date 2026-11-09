@@ -31,7 +31,11 @@ void Game::SetPacmanController(std::shared_ptr<IPacmanController> controller) {
     m_pacmanController = controller ? std::move(controller) : MakeHumanPacmanController();
 }
 
-void Game::SetPacmanController(FnPacmanController::Fn fn) {
+void Game::SetPacmanController(FnPacmanController::FnWithLegal fn) {
+    SetPacmanController(std::make_shared<FnPacmanController>(std::move(fn)));
+}
+
+void Game::SetPacmanController(FnPacmanController::FnSimple fn) {
     SetPacmanController(std::make_shared<FnPacmanController>(std::move(fn)));
 }
 
@@ -39,7 +43,11 @@ void Game::SetGhostController(GhostType type, std::shared_ptr<IGhostController> 
     SetGhostController(static_cast<size_t>(type), std::move(controller));
 }
 
-void Game::SetGhostController(GhostType type, FnGhostController::Fn fn) {
+void Game::SetGhostController(GhostType type, FnGhostController::FnWithLegal fn) {
+    SetGhostController(type, std::make_shared<FnGhostController>(std::move(fn)));
+}
+
+void Game::SetGhostController(GhostType type, FnGhostController::FnSimple fn) {
     SetGhostController(type, std::make_shared<FnGhostController>(std::move(fn)));
 }
 
@@ -55,7 +63,11 @@ void Game::SetAllGhostControllers(std::shared_ptr<IGhostController> controller) 
     }
 }
 
-void Game::SetAllGhostControllers(FnGhostController::Fn fn) {
+void Game::SetAllGhostControllers(FnGhostController::FnWithLegal fn) {
+    SetAllGhostControllers(std::make_shared<FnGhostController>(std::move(fn)));
+}
+
+void Game::SetAllGhostControllers(FnGhostController::FnSimple fn) {
     SetAllGhostControllers(std::make_shared<FnGhostController>(std::move(fn)));
 }
 
@@ -103,6 +115,7 @@ GameSnapshot Game::SaveState(const LcgRng& rng) const {
     snap.tickAccumulator = m_tickAccumulator;
     snap.frightTimer = m_frightTimer;
     snap.pendingInputDir = m_pendingInput.desiredDir;
+    snap.pacmanPollTimer = static_cast<uint8_t>(std::clamp(m_pacmanPollTimer, 0, 255));
     return snap;
 }
 
@@ -135,6 +148,7 @@ bool Game::LoadState(const GameSnapshot& snapshot, LcgRng& rng) {
     m_frightTimer = snapshot.frightTimer;
     m_pendingInput = InputState{};
     m_pendingInput.desiredDir = snapshot.pendingInputDir;
+    m_pacmanPollTimer = snapshot.pacmanPollTimer;
 
     if (m_state != GameState::LevelClear) {
         m_renderer.SetFlashMode(false);
@@ -162,11 +176,11 @@ bool Game::LoadStateFromFile(const std::filesystem::path& path, LcgRng& rng) {
     return LoadState(snap, rng);
 }
 
-void Game::StartNewGame() {
-    ResetGlobalRandom(0);
+void Game::StartNewGame(int startLevel, uint16_t seed) {
+    ResetGlobalRandom(seed);
     m_score = 0;
     m_lives = 3;
-    m_level = 1;
+    m_level = std::clamp(startLevel, 1, 12);
     m_awardedExtraLife = false;
     m_maze.Reset();
     StartNewRound();
@@ -178,6 +192,7 @@ void Game::StartNewRound() {
         m_pacmanController->OnReset();
     }
     m_pendingInput = InputState{};
+    m_pacmanPollTimer = 0;
     for (auto& g : m_ghosts) {
         g.Reset(m_level);
     }
@@ -336,17 +351,25 @@ void Game::Tick18Hz() {
         }
     }
 
-    // 2. Pac-Man moves ONLY if no dot was eaten this tick (matching 0x073D & 0x0743 skip in v1.com)
-    if (!dotEatenThisTick) {
+    // 2. Poll Pac-Man controller every m_pacmanPollInterval ticks (default 3 ticks = ~6.07Hz / 164.8ms)
+    if (m_pacmanPollTimer <= 0) {
         if (m_pacmanController) {
             GameContext pacCtx = MakeContext();
-            Direction dir = m_pacmanController->ChooseDirection(m_pacman, pacCtx);
+            LegalActions legal = GetPacmanLegalActions(m_maze, m_pacman);
+            Direction dir = m_pacmanController->ChooseDirection(m_pacman, pacCtx, legal);
             if (dir != Direction::None) {
                 m_pacman.SetRequestedDirection(dir);
             }
         }
-        m_pacman.Update(m_maze);
         m_pendingInput.desiredDir = Direction::None;
+        m_pacmanPollTimer = m_pacmanPollInterval - 1;
+    } else {
+        m_pacmanPollTimer--;
+    }
+
+    // Pac-Man moves ONLY if no dot was eaten this tick (matching 0x073D & 0x0743 skip in v1.com)
+    if (!dotEatenThisTick) {
+        m_pacman.Update(m_maze);
     }
 
     if (m_score > m_highScore) {
