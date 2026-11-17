@@ -32,17 +32,20 @@ PathResult FindDirectedShortestPath(const Maze& maze,
                                     int targetY, int targetX);
 
 // Distance Map from a single directed source (startY, startX, startDir) to all grid coordinates.
-// Useful for evaluating how many steps it takes a specific Ghost to reach any tile in the maze.
+// Backed by a lazily populated static memoization cache for O(1) zero-copy lookup.
 class DirectedDistanceMap {
 public:
-    DirectedDistanceMap();
-    void ComputeFrom(const Maze& maze, int startY, int startX, Direction startDir);
+    using DistGrid = std::array<int16_t, GRID_ROWS * GRID_COLS>;
 
-    // Minimum steps across all arrival directions to reach (targetY, targetX)
+    DirectedDistanceMap() = default;
+    void ComputeFrom(const Maze& maze, int startY, int startX, Direction startDir,
+                     bool includeCornerPause = false);
+
+    // Minimum steps/ticks across all arrival directions to reach (targetY, targetX)
     [[nodiscard]] int GetDistance(int targetY, int targetX) const;
 
 private:
-    std::array<int16_t, GRID_ROWS * GRID_COLS> m_minDist{};
+    const DistGrid* m_distPtr = nullptr;
 };
 
 // Helper for Ghost AI or Pac-Man threat assessment:
