@@ -3,6 +3,7 @@
 #include "entities.hpp"
 #include "controllers.hpp"
 #include "pathfinder.hpp"
+#include "qlearning.hpp"
 #include "serialization.hpp"
 #include "benchmark.hpp"
 #include "game.hpp"
@@ -1059,6 +1060,152 @@ void TestMazePathfinder() {
     std::cout << "  -> All Maze Pathfinder checks passed!\n";
 }
 
+void TestTabularQLearning() {
+    std::cout << "[Test] Validating Discretized Tabular Q-Learning Controller & Training...\n";
+
+    // 1. Verify 4-bit LegalActions mask
+    Maze maze;
+    Pacman pac;
+    pac.SetGridPos(22, 14, Direction::Up); // Up (0), Down (1), Right (3) are open; Left (2) is wall
+    LegalActions legal = GetPacmanLegalActions(maze, pac);
+    assert(legal.IsLegal(Direction::Up));
+    assert(legal.IsLegal(Direction::Down));
+    assert(!legal.IsLegal(Direction::Left));
+    assert(legal.IsLegal(Direction::Right));
+    assert(legal.Mask() == ((1u << 0) | (1u << 1) | (1u << 3)));
+    std::cout << "  - Verified 4-bit action legality mask (0b1011 at (22, 14))!\n";
+
+    // 2. Verify EncodeState bounds and Ghost Danger radar sensitivity:
+    Game game;
+    game.StartNewGame();
+    game.SetState(GameState::Playing);
+    game.GetPacman().SetGridPos(22, 14, Direction::Up);
+    // Place Blinky far away at (25, 38) vs right above at (20, 14) moving Down toward Pac-Man!
+    game.GetGhost(GhostType::Blinky).SetGridPos(25, 38, Direction::Up);
+    GameContext safeCtx = game.MakeContext();
+    uint16_t safeState = TabularQPacmanController::EncodeState(game.GetPacman(), safeCtx, legal);
+    assert(safeState < TabularQPacmanController::NUM_STATES);
+
+    game.GetGhost(GhostType::Blinky).SetGridPos(20, 14, Direction::Down);
+    GameContext dangerCtx = game.MakeContext();
+    uint16_t dangerState = TabularQPacmanController::EncodeState(game.GetPacman(), dangerCtx, legal);
+    assert(dangerState < TabularQPacmanController::NUM_STATES);
+    assert(dangerState != safeState); // Directional danger bucket changed!
+    std::cout << "  - Verified EncodeState tactical radar distinguishes safeState=" << safeState
+              << " from dangerState=" << dangerState << "!\n";
+
+    // 2b. Verify catchable frightened ghost reachability & final-dot deferral:
+    // Place frightened Inky 18 steps away (beyond the old 12-step limit, but well within frightTimer=100).
+    game.GetGhost(GhostType::Blinky).SetGridPos(25, 38, Direction::Up);
+    game.GetGhost(GhostType::Inky).SetGridPos(22, 26, Direction::Left);
+    game.GetGhost(GhostType::Inky).SetFrightened();
+    GameContext frightCtx = game.MakeContext();
+    frightCtx.frightTimer = 100;
+    int catchableDist = INF_DIST;
+    uint16_t frightState = TabularQPacmanController::EncodeState(
+        game.GetPacman(), frightCtx, legal, nullptr, nullptr, &catchableDist);
+    assert(catchableDist < INF_DIST && catchableDist > 12);
+    assert(frightState < TabularQPacmanController::NUM_STATES);
+    std::cout << "  - Verified time-to-catch frightened ghost radar detects weakened ghost at "
+              << catchableDist << " steps (frightTimer=100)!\n";
+
+    // 3. Verify Watkins's Q(lambda) multi-step eligibility trace propagation & terminal death penalty:
+    TabularQConfig qcfg{};
+    qcfg.alpha = 0.20f;
+    qcfg.gamma = 0.95f;
+    qcfg.lambda = 0.80f;
+    qcfg.epsilon = 0.0f;
+    qcfg.training = true;
+    TabularQPacmanController qAgent(qcfg);
+
+    // Step 1: Agent acts in `safeState` (Blinky & Inky far at (25, 38))
+    game.GetGhost(GhostType::Inky).SetGridPos(25, 38, Direction::Up);
+    game.GetGhost(GhostType::Blinky).SetGridPos(25, 38, Direction::Up);
+    Direction chosenInSafe = qAgent.ChooseDirection(game.GetPacman(), safeCtx, legal);
+    assert(qAgent.GetTraceLength() == 1);
+
+    // Step 2: Blinky closes in at (20, 14) -> Agent transitions to `dangerState` and chooses `chosenBeforeDeath`
+    game.GetGhost(GhostType::Blinky).SetGridPos(20, 14, Direction::Down);
+    Direction chosenBeforeDeath = qAgent.ChooseDirection(game.GetPacman(), dangerCtx, legal);
+    assert(qAgent.GetTraceLength() == 2);
+
+    // Simulate Pac-Man dying on the next tick -> OnPacmanDied applies -500 terminal penalty
+    // and propagates it backward across BOTH `dangerState` (weight 1.0) AND `safeState` (weight gamma*lambda = 0.76)!
+    qAgent.OnPacmanDied(dangerCtx);
+    float qDangerAfterDeath = qAgent.GetQValue(dangerState, chosenBeforeDeath);
+    float qSafeAfterDeath   = qAgent.GetQValue(safeState, chosenInSafe);
+    assert(qDangerAfterDeath < -90.0f); // Immediate step before death: -100.0
+    assert(qSafeAfterDeath < -60.0f);   // 2 steps before death: updated via eligibility trace in a single episode!
+    assert(qAgent.GetTraceLength() == 0);
+
+    // On the next decision from the same dangerState, greedy selection must avoid `chosenBeforeDeath`!
+    qAgent.SetTraining(false);
+    Direction chosenAfterLearning = qAgent.ChooseDirection(game.GetPacman(), dangerCtx, legal);
+    assert(chosenAfterLearning != chosenBeforeDeath);
+    std::cout << "  - Verified Watkins's Q(lambda) trace propagated death penalty to both step t-1 (Q="
+              << qDangerAfterDeath << ") and step t-2 (Q=" << qSafeAfterDeath << ")!\n";
+
+    // Round-trip save/load of Q-table to file
+    auto tmpQFile = std::filesystem::temp_directory_path() / "pcman_test_qtable.bin";
+    assert(qAgent.SaveToFile(tmpQFile));
+    TabularQPacmanController loadedAgent;
+    assert(loadedAgent.LoadFromFile(tmpQFile));
+    std::filesystem::remove(tmpQFile);
+    assert(loadedAgent.GetQValue(dangerState, chosenBeforeDeath) == qDangerAfterDeath);
+    assert(loadedAgent.GetQValue(safeState, chosenInSafe) == qSafeAfterDeath);
+    std::cout << "  - Verified binary Q-table file save/load round-trip!\n";
+
+    // 4. Verify headless training improves benchmark performance over random baseline:
+    BenchmarkConfig randCfg{};
+    randCfg.pacmanStrategy = "random";
+    randCfg.episodes = 20;
+    randCfg.maxTicksPerEpisode = 3000;
+    randCfg.baseSeed = 100;
+    BenchmarkSummary randSummary = RunBenchmark(randCfg);
+
+    BenchmarkConfig qTrainCfg = randCfg;
+    qTrainCfg.pacmanStrategy = "qtable";
+    qTrainCfg.trainEpisodes = 150;
+    qTrainCfg.verboseTraining = false;
+    BenchmarkSummary qSummary = RunBenchmark(qTrainCfg);
+
+    assert(qSummary.meanScore > randSummary.meanScore);
+    assert(qSummary.meanDotsEaten > randSummary.meanDotsEaten);
+    std::cout << "  - Verified trained Tabular Q-Learning agent outperforms Random baseline "
+              << "(Trained Mean Score=" << qSummary.meanScore
+              << " vs Random=" << randSummary.meanScore << ")!\n";
+
+    // 5. Verify ComputeTrainingEpsilon for ExpCutoff (1.000 -> 0.001 at 95th percentile, then 0.000):
+    EpsilonSchedule expSched{};
+    expSched.mode = EpsScheduleMode::ExpCutoff;
+    expSched.epsStart = 1.000f;
+    expSched.epsMin = 0.001f;
+    expSched.epsCutoff = 0.95f;
+    float eps0 = ComputeTrainingEpsilon(expSched, 0, 5000);
+    float eps95 = ComputeTrainingEpsilon(expSched, 4749, 5000);
+    float epsTail = ComputeTrainingEpsilon(expSched, 4750, 5000);
+    float epsEnd = ComputeTrainingEpsilon(expSched, 4999, 5000);
+    assert(std::abs(eps0 - 1.000f) < 1e-4f);
+    assert(std::abs(eps95 - 0.001f) < 1e-4f);
+    assert(epsTail == 0.0f && epsEnd == 0.0f);
+    std::cout << "  - Verified ExpCutoff epsilon schedule (ep0=" << eps0
+              << ", ep95%=" << eps95 << ", tail=" << epsEnd << ")!\n";
+
+    // 6. Verify ComputeTrainingGamma for LinearRamp & EpsCoupled (0.80 -> 0.95):
+    GammaSchedule linG{ GammaScheduleMode::LinearRamp, 0.80f, 0.95f };
+    assert(std::abs(ComputeTrainingGamma(linG, 1.0f, 0, 5000) - 0.80f) < 1e-4f);
+    assert(std::abs(ComputeTrainingGamma(linG, 0.01f, 3999, 5000) - 0.95f) < 1e-3f);
+    assert(std::abs(ComputeTrainingGamma(linG, 0.01f, 4999, 5000) - 0.95f) < 1e-4f);
+
+    GammaSchedule epsG{ GammaScheduleMode::EpsCoupled, 0.80f, 0.95f };
+    assert(std::abs(ComputeTrainingGamma(epsG, 1.00f, 0, 5000) - 0.80f) < 1e-4f);
+    assert(std::abs(ComputeTrainingGamma(epsG, 0.50f, 500, 5000) - 0.875f) < 1e-4f);
+    assert(std::abs(ComputeTrainingGamma(epsG, 0.00f, 4999, 5000) - 0.95f) < 1e-4f);
+    std::cout << "  - Verified LinearRamp and EpsCoupled dynamic gamma schedules (0.80 -> 0.95)!\n";
+
+    std::cout << "  -> All Tabular Q-Learning checks passed!\n";
+}
+
 int main() {
     std::cout << "=== Running PC-Man Unit Tests ===\n";
     TestRomData();
@@ -1078,6 +1225,7 @@ int main() {
     TestGameStateSerialization();
     TestRandomBaselineAndBenchmark();
     TestMazePathfinder();
+    TestTabularQLearning();
     std::cout << "=== All Unit Tests Passed Successfully! ===\n";
     return 0;
 }

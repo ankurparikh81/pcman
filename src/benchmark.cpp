@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <iostream>
 
 namespace pcman {
@@ -27,6 +28,140 @@ bool ConfigureGameControllers(Game& game,
     return true;
 }
 
+float ComputeTrainingEpsilon(const EpsilonSchedule& sched, int ep, int totalEpisodes) {
+    if (totalEpisodes <= 1) {
+        return std::clamp(sched.epsStart, 0.0f, 1.0f);
+    }
+    float progress = static_cast<float>(ep) / static_cast<float>(totalEpisodes - 1);
+    float cutoff = std::clamp(sched.epsCutoff, 0.01f, 1.0f);
+    if (progress > cutoff + 1e-6f) {
+        return 0.0f;
+    }
+
+    float t = std::clamp(progress / cutoff, 0.0f, 1.0f);
+    if (sched.mode == EpsScheduleMode::FloorClamp) {
+        float minEps = std::clamp(sched.epsMin, 0.0f, 1.0f);
+        float startEps = std::clamp(sched.epsStart, minEps, 1.0f);
+        return std::max(minEps, startEps * std::pow(0.001f, t));
+    }
+
+    float startEps = std::clamp(sched.epsStart, 0.0f, 1.0f);
+    float minEps = std::clamp(sched.epsMin, 0.0f, startEps);
+    if (startEps <= 0.0f) {
+        return 0.0f;
+    }
+    float ratio = std::max(1e-6f, minEps / startEps);
+    return std::clamp(startEps * std::pow(ratio, t), minEps, startEps);
+}
+
+float ComputeTrainingGamma(const GammaSchedule& sched, float currentEps, int ep, int totalEpisodes) {
+    float gEnd = std::clamp(sched.gammaEnd, 0.0f, 0.9999f);
+    if (sched.mode == GammaScheduleMode::Fixed || totalEpisodes <= 1) {
+        return gEnd;
+    }
+    float gStart = std::clamp(sched.gammaStart, 0.0f, 0.9999f);
+    if (sched.mode == GammaScheduleMode::EpsCoupled) {
+        float w = std::clamp(1.0f - currentEps, 0.0f, 1.0f);
+        return std::clamp(gStart + (gEnd - gStart) * w, 0.0f, 0.9999f);
+    }
+    // LinearRamp: smoothly ramp gammaStart -> gammaEnd over the first 80% of training episodes,
+    // then hold gammaEnd for the final 20% so Q-values stabilize at the target scale 1/(1 - gammaEnd).
+    float progress = static_cast<float>(ep) / static_cast<float>(totalEpisodes - 1);
+    float t = std::clamp(progress / 0.80f, 0.0f, 1.0f);
+    return std::clamp(gStart + (gEnd - gStart) * t, 0.0f, 0.9999f);
+}
+
+void TrainTabularQAgent(TabularQPacmanController& agent,
+                        int trainEpisodes,
+                        int maxTicksPerEpisode,
+                        uint16_t baseSeed,
+                        int startLevel,
+                        const std::array<std::string, 4>& ghostStrategies,
+                        bool verbose,
+                        const EpsilonSchedule& epsSchedule,
+                        const GammaSchedule& gammaSchedule) {
+    if (trainEpisodes <= 0) {
+        agent.SetTraining(false);
+        agent.SetEpsilon(0.0f);
+        return;
+    }
+
+    int maxTicks = std::max(1, maxTicksPerEpisode);
+    auto agentPtr = std::shared_ptr<TabularQPacmanController>(&agent, [](TabularQPacmanController*) {});
+
+    Game game;
+    ConfigureGameControllers(game, "random", ghostStrategies);
+    game.SetPacmanController(agentPtr);
+
+    agent.SetTraining(true);
+    agent.SetAlpha(0.25f);
+
+    if (verbose) {
+        std::printf("=== Training Tabular Q-Learning Pac-Man (%d episodes) ===\n", trainEpisodes);
+    }
+
+    int reportInterval = std::max(1, trainEpisodes / 5);
+    double windowScoreSum = 0.0;
+    double windowDotsSum = 0.0;
+    int windowCount = 0;
+
+    GammaSchedule activeGamma = gammaSchedule;
+    if (activeGamma.mode == GammaScheduleMode::Fixed) {
+        activeGamma.gammaEnd = agent.GetGamma();
+    }
+
+    for (int ep = 0; ep < trainEpisodes; ++ep) {
+        float eps = ComputeTrainingEpsilon(epsSchedule, ep, trainEpisodes);
+        agent.SetEpsilon(eps);
+        float curGamma = ComputeTrainingGamma(activeGamma, eps, ep, trainEpisodes);
+        agent.SetGamma(curGamma);
+
+        // Offset training seeds by 0x8000 so training seeds do not overlap evaluation seeds
+        uint16_t trainSeed = static_cast<uint16_t>(baseSeed + 0x8000u + static_cast<uint16_t>(ep));
+        game.StartNewGame(startLevel, trainSeed);
+        game.SetState(GameState::Playing);
+
+        int ticks = 0;
+        int levelsCleared = 0;
+        while (ticks < maxTicks && game.GetState() != GameState::GameOver) {
+            GameState st = game.GetState();
+            if (st == GameState::Playing) {
+                game.Tick18Hz();
+                ticks++;
+            } else if (st == GameState::Ready) {
+                game.SetState(GameState::Playing);
+            } else if (st == GameState::PacmanDying) {
+                game.Update(2.0f, InputState{});
+            } else if (st == GameState::LevelClear) {
+                levelsCleared++;
+                game.Update(3.0f, InputState{});
+            }
+        }
+
+        int dotsEaten = levelsCleared * Maze::GetTotalDots() +
+                        (Maze::GetTotalDots() - game.GetMaze().GetRemainingDots());
+        windowScoreSum += game.GetScore();
+        windowDotsSum += dotsEaten;
+        windowCount++;
+
+        if (verbose && ((ep + 1) % reportInterval == 0 || ep + 1 == trainEpisodes)) {
+            std::printf("  [Ep %4d/%4d] eps=%.3f gamma=%.3f | Avg Score=%.1f | Avg Dots=%.1f | Learned Q-Entries=%zu (Updates=%llu)\n",
+                        ep + 1, trainEpisodes, eps, curGamma,
+                        windowScoreSum / windowCount,
+                        windowDotsSum / windowCount,
+                        agent.CountNonZeroEntries(),
+                        static_cast<unsigned long long>(agent.GetTotalUpdates()));
+            windowScoreSum = 0.0;
+            windowDotsSum = 0.0;
+            windowCount = 0;
+        }
+    }
+
+    // Switch to greedy evaluation policy
+    agent.SetTraining(false);
+    agent.SetEpsilon(0.0f);
+}
+
 BenchmarkSummary RunBenchmark(const BenchmarkConfig& config) {
     BenchmarkSummary summary{};
     summary.config = config;
@@ -37,6 +172,29 @@ BenchmarkSummary RunBenchmark(const BenchmarkConfig& config) {
 
     Game game;
     ConfigureGameControllers(game, config.pacmanStrategy, config.ghostStrategies);
+
+    // If using Tabular Q-Learning, optionally load an existing Q-table and/or run training episodes
+    if (auto qAgent = std::dynamic_pointer_cast<TabularQPacmanController>(game.GetPacmanController())) {
+        if (!config.qtableFile.empty() && std::filesystem::exists(config.qtableFile)) {
+            qAgent->LoadFromFile(config.qtableFile);
+        }
+        if (config.trainEpisodes > 0) {
+            qAgent->SetTraceCapacity(config.traceCapacity);
+            qAgent->SetGamma(std::clamp(config.gamma, 0.0f, 0.9999f));
+            qAgent->SetLambda(config.lambda);
+            GammaSchedule gSched = config.gammaSchedule;
+            gSched.gammaEnd = std::clamp(config.gamma, 0.0f, 0.9999f);
+            TrainTabularQAgent(*qAgent, config.trainEpisodes, maxTicks,
+                               config.baseSeed, config.startLevel,
+                               config.ghostStrategies, config.verboseTraining,
+                               config.epsSchedule, gSched);
+            if (!config.qtableFile.empty()) {
+                qAgent->SaveToFile(config.qtableFile);
+            }
+        }
+        qAgent->SetTraining(false);
+        qAgent->SetEpsilon(0.0f);
+    }
 
     auto startTime = std::chrono::steady_clock::now();
     int64_t totalTicksSimulated = 0;
