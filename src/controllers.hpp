@@ -20,26 +20,37 @@ enum class CharacterId : uint8_t {
 };
 
 // Fixed-capacity set of legal directional key inputs (Up, Down, Left, Right)
-// available to a character at a given game state.
+// available to a character at a given game state, paired with a 4-bit legality mask.
 struct LegalActions {
     std::array<Direction, 4> actions{
         Direction::None, Direction::None, Direction::None, Direction::None
     };
     uint8_t count = 0;
+    uint8_t mask = 0; // Bit d (0..3) is 1 if Direction(d) is legal in the current state
 
     constexpr void Add(Direction d) {
         if (count < 4 && !Contains(d)) {
             actions[count++] = d;
+            uint8_t idx = static_cast<uint8_t>(d);
+            if (idx < 4) {
+                mask |= static_cast<uint8_t>(1u << idx);
+            }
         }
     }
 
     [[nodiscard]] constexpr bool Contains(Direction d) const {
+        uint8_t idx = static_cast<uint8_t>(d);
+        if (idx < 4) {
+            return (mask & static_cast<uint8_t>(1u << idx)) != 0;
+        }
         for (uint8_t i = 0; i < count; ++i) {
             if (actions[i] == d) return true;
         }
         return false;
     }
 
+    [[nodiscard]] constexpr bool IsLegal(Direction d) const { return Contains(d); }
+    [[nodiscard]] constexpr uint8_t Mask() const { return mask; }
     [[nodiscard]] constexpr bool Empty() const { return count == 0; }
     [[nodiscard]] constexpr uint8_t Size() const { return count; }
     constexpr Direction operator[](size_t i) const { return actions[i]; }
@@ -108,6 +119,8 @@ public:
                                       const GameContext& ctx,
                                       const LegalActions& legalActions) = 0;
     virtual void OnReset() {}
+    virtual void OnPacmanDied([[maybe_unused]] const GameContext& ctx) {}
+    virtual void OnLevelCleared([[maybe_unused]] const GameContext& ctx) {}
 };
 
 class IGhostController {

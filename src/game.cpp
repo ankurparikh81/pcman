@@ -444,6 +444,9 @@ void Game::Tick18Hz() {
                 return;
             } else if (!g.IsEaten()) {
                 // Pac-Man hit by ghost!
+                if (m_pacmanController) {
+                    m_pacmanController->OnPacmanDied(MakeContext());
+                }
                 m_pacman.StartDying();
                 m_state = GameState::PacmanDying;
                 m_deathTicks = 0;
@@ -459,6 +462,9 @@ void Game::Tick18Hz() {
 
     // 4. Check Level Clear
     if (m_maze.GetRemainingDots() == 0) {
+        if (m_pacmanController) {
+            m_pacmanController->OnLevelCleared(MakeContext());
+        }
         m_state = GameState::LevelClear;
         m_stateTimer = LEVEL_CLEAR_DURATION; // Authentic ~2.60s sequence at 0x038C..0x040A in v1.com
         m_pacman.SetClosedMouth(true);       // Authentic solid circle mouth frame (0x2DD1 in ROM)
