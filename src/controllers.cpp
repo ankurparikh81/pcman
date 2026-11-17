@@ -1,4 +1,5 @@
 #include "controllers.hpp"
+#include "qlearning.hpp"
 #include <array>
 
 namespace pcman {
@@ -273,6 +274,9 @@ std::shared_ptr<IPacmanController> CreatePacmanControllerByName(std::string_view
     }
     if (name == "random") {
         return MakeRandomPacmanController();
+    }
+    if (name == "qtable") {
+        return MakeTabularQPacmanController();
     }
     return nullptr;
 }

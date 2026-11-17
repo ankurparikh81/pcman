@@ -31,6 +31,7 @@ CORE_SRCS = src/cga_renderer.cpp \
             src/entities.cpp \
             src/controllers.cpp \
             src/pathfinder.cpp \
+            src/qlearning.cpp \
             src/serialization.cpp \
             src/benchmark.cpp \
             src/game.cpp

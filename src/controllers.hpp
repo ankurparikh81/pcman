@@ -222,7 +222,7 @@ std::shared_ptr<IGhostController> MakeOriginalGhostController();
 std::shared_ptr<IGhostController> MakeRandomGhostController();
 
 // Factory lookup by name:
-// Pac-Man names: "human", "random" (returns nullptr if unknown)
+// Pac-Man names: "human", "random", "qtable" (returns nullptr if unknown)
 // Ghost names:   "original", "random" (returns nullptr if unknown)
 std::shared_ptr<IPacmanController> CreatePacmanControllerByName(std::string_view name);
 std::shared_ptr<IGhostController> CreateGhostControllerByName(std::string_view name);
