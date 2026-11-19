@@ -1,184 +1,129 @@
-# PC-Man (1982) — C++20 / Raylib Recreation
+# PC-Man RL Sandbox
 
-A faithful, cycle-accurate, zero-dependency C++20 recreation of the classic 1982 IBM PC DOS game **PC-Man (v1.0)** by Greg Kuperberg (Orion Software), powered by [raylib](https://www.raylib.com/).
+A fast, self-contained C++20 Pac-Man test-bed for learning and experimenting with reinforcement learning and search algorithms.
 
-Every visual element, audio note, collision rule, entity movement mechanic, and ghost AI behavior was reverse-engineered from the original 16,448-byte `Pcman v1.com` 8086 disassembly and preserved with 100% authenticity.
+The game itself is a faithful C++ recreation of the 1982 DOS classic *PC-Man*, but the codebase is structured so simulation is completely decoupled from rendering and audio. That gives you the best of both worlds: you can train and evaluate agents over thousands of games in headless C++ at high speed, save a trained policy to disk, and then load that exact checkpoint into the live Raylib GUI to watch what your agent actually learned.
 
----
+## Why Use This to Learn RL?
 
-## Features & Historical Authenticity
+Classic arcade games are great RL benchmarks, yet Python environments with slow image-capture wrappers often turn simple experiments (like testing a reward tweak or exploration schedule) into a long wait. Keeping everything in native C++ changes the feedback loop:
 
-### 1. 100% Standalone Native C++ Assets (`constexpr`)
-* **Zero External Data Files**: All graphics, maze layouts, sprites, letter bitmaps, and sound tables have been reverse-engineered from the original binary and embedded directly as typed C++20 `constexpr` structures in [`src/game_data.hpp`](file:///Users/ankur/src/pcman/src/game_data.hpp).
-* The resulting executable is completely self-contained—no ROM files, asset directories, or disk loading required.
+* **Fast headless training & benchmarking:** Run thousands of training and evaluation episodes in seconds on a single CPU core, complete with mean/min/max scores, dots eaten, survival time, and level-clear rates.
+* **Visual debugging with saved checkpoints:** Save a Q-table with `--qtable-file` during headless training, then launch the GUI with the same file to see *why* a policy plateaued—whether it gets trapped in corners, oscillates between two pellets, or refuses to chase frightened ghosts.
+* **Deterministic, reproducible runs:** Every episode is driven by a seeded PRNG (`--seed`). If an agent fails in an interesting situation, you can reproduce that exact game deterministically or snapshot and restore state (`Game::SaveState()` / `Game::LoadState()`) for tree search and rollouts.
+* **Swappable opponents & baselines:** Control Pac-Man and each of the four ghosts independently (`original`, `random`, or your own controller). Compare your agent against the random baseline or mix ghost behaviors from the CLI.
 
-### 2. Authentic IBM PC CGA Mode 4 Visuals
-* **Palette 0 High-Intensity**: Faithful 4-color raster graphics (Black, Light Green, Bright Red, Yellow) matching early IBM PC Color Graphics Adapters.
-* **4:3 CRT Geometry**: 320×200 discrete raster geometry scaled with aspect-ratio preservation (letterboxed / pillarboxed on any window size and resolution).
-* **Level Clear Border Flashing**: Authentic ~8 Hz CGA border flash sequence upon clearing all dots.
-* **Pixel-Accurate Sprites**: All 16 directional Pac-Man frames, 17-frame death melting sequence, 56-byte pre-composed ghost sprites (with walking feet animation), 8 level fruits, and the original 6-letter 36×23 "PC-MAN" title logo.
-
-### 3. Authentic IBM PC Speaker 1-Bit Sound Engine
-* **Real-Time Square Wave Synthesis**: Directly emulates the Intel 8253 Programmable Interval Timer (PIT) channel 2 driving the PC speaker at 44.1 kHz.
-* **Original Pit Divisor Tables**: Verbatim pitch divisor frequencies extracted from the original DOS binary:
-  * Title screen intro song (137 notes)
-  * Siren sound generator (8 frequencies)
-  * Dot eating alternate-pitch chomp
-  * Energizer sound & fruit bonus chime
-  * Frightened ghost eaten ascending arpeggio (24 notes)
-  * Pac-Man death sound (34 notes)
-  * Extra life fanfare at 10,000 points
-
-### 4. True 18.2065 Hz DOS BIOS Timer Cadence
-* **Accurate Tick Pacing**: Gameplay mechanics are tied to the authentic IBM PC BIOS timer frequency ($18.2065\text{ Hz} \approx 54.925\text{ ms per tick}$) independent of video refresh rate.
-* **Dot-Eating Pacing (`neg byte [0x2ccc]`)**: Pac-Man pauses for 1 tick on alternating dots, faithfully recreating the original 3-tick-per-dot cadence.
-* **Death Melting Pacing**: Authentic 34-tick (~1.87s) death sequence.
-* **Freeze Frame on Ghost Eat**: Authentic ~0.44s gameplay freeze when Pac-Man consumes a frightened ghost while the eaten score popup is displayed.
-
-### 5. Verbatim 8086 Ghost AI & PRNG Engine
-* **16-bit LCG Random Generator**: Matches the original pseudo-random formula at `0x0B01`:
-  $$\text{seed}_{n+1} = (\text{seed}_n \times \text{0x98DD} + \text{0xD5EF}) \pmod{65536}$$
-* **Roulette Wheel Decision Making**: Ghosts choose movement at intersections using weighted probability tables based on target Pac-Man direction, mode (Chase, Frightened, or Eaten Eyes), inertia (2× weight on current direction), and level difficulty thresholds.
-* **Reverse Processing Order**: Ghosts update in reverse array order (Clyde → Inky → Pinky → Blinky) matching the original `0x07AF` loop.
-* **Authentic Pen Release**: Ghosts exit the center pen according to authentic level-based dot thresholds (`penThresh`).
-
-### 6. Lane Centering & Corner Queuing
-* **Exact Lane Centering**: Starting grid position `(25, 14)` derives pixel position `(104, 93)`, perfectly centering Pac-Man's 16-pixel sprite inside the 16-pixel corridors with 0.0 pixels of slack.
-* **Intersection Turn Buffering**: Buffered turns are held until intersections are reached, allowing smooth continuous movement without getting stuck on corridor walls.
-* **Immediate 180° Reversal**: Mid-corridor direction reversals take effect instantly without waiting for an intersection.
-
----
-
-## Controls
-
-The game supports multiple simultaneous control schemes:
-
-| Action | Primary Keys | Alternate Keys | Classic ESDX | Gamepad / Joystick |
-| :--- | :--- | :--- | :--- | :--- |
-| **Move Up** | **Up Arrow** | **W** | **E** | **D-Pad Up / Left Stick Up** |
-| **Move Down** | **Down Arrow** | **S** | **X** | **D-Pad Down / Left Stick Down** |
-| **Move Left** | **Left Arrow** | **A** | **S** | **D-Pad Left / Left Stick Left** |
-| **Move Right** | **Right Arrow** | **D** | **D** | **D-Pad Right / Left Stick Right** |
-| **Start Game** | **Space** | **J** | — | **A / B / Start** |
-| **Toggle Sound** | **Ctrl + S** | — | — | — |
-| **Quit to Title / Exit** | **Escape** | — | — | — |
-
----
-
-## Project Structure
-
-```
-pcman/
-├── src/
-│   ├── main.cpp            # Entry point & window lifecycle
-│   ├── game.hpp / .cpp     # Game loop, states, timing, collision & HUD
-│   ├── game_data.hpp       # Reverse-engineered typed constexpr ROM tables
-│   ├── rom_data.hpp        # ROM accessors & LevelConfig structures
-│   ├── maze.hpp / .cpp     # 30-stride authentic collision map & dot logic
-│   ├── entities.hpp / .cpp # Pac-Man & Ghost AI state machines
-│   ├── cga_renderer.hpp    # CGA Mode 4 software rasterizer & CRT presentation
-│   ├── pc_speaker.hpp      # 1-bit PC speaker square wave audio synthesizer
-│   └── font_data.inl       # IBM PC BIOS 8x8 font bitmap data
-├── tests/
-│   └── test_pcman.cpp      # Automated unit test suite (8 test suites)
-├── Makefile                # Cross-platform Makefile (macOS, Linux, MinGW)
-├── CMakeLists.txt          # Modern CMake build configuration
-└── README.md               # Project documentation
-```
-
----
-
-## Building and Running
+## Quick Start
 
 ### Prerequisites
+* A C++20 compiler (`clang++` or `g++`)
+* [raylib](https://www.raylib.com/) (`brew install raylib` on macOS, `sudo apt install libraylib-dev` on Debian/Ubuntu)
 
-* A **C++20** compatible compiler:
-  * **macOS**: Apple Clang (Xcode Command Line Tools: `xcode-select --install`)
-  * **Linux**: GCC 11+ or Clang 13+
-  * **Windows**: MinGW-w64 (GCC 11+) or MSVC 2019+
-* **raylib** (v4.0 or newer):
-  * **macOS**: `brew install raylib`
-  * **Ubuntu/Debian**: `sudo apt install libraylib-dev`
-  * **Arch Linux**: `sudo pacman -S raylib`
-  * **Fedora**: `sudo dnf install raylib-devel`
+### Build & Test
 
----
-
-### Using `make` (Recommended for macOS & Linux)
-
-Build the standalone binary:
 ```bash
-make
+make          # builds ./pcman
+make test     # builds and runs the unit test suite
 ```
 
-Run the game:
+CMake is also supported (`mkdir build && cd build && cmake .. && cmake --build . && ctest`).
+
+### Play, Train, and Watch
+
 ```bash
+# 1. Play manually in the GUI
 ./pcman
+
+# 2. Measure the random Pac-Man baseline over 100 headless games
+./pcman --headless --pacman random --episodes 100
+
+# 3. Train the built-in Tabular Q-Learning agent for 50,000 games and save it
+./pcman --headless --pacman qtable --train-episodes 50000 --episodes 200 --qtable-file agent.bin
+
+# 4. Watch the trained agent play live in the GUI
+./pcman --pacman qtable --qtable-file agent.bin
 ```
 
-Run the automated test suite:
+## Exploring RL with the Built-In Q-Learning Agent
+
+Naive tabular Q-learning fails on raw Pac-Man coordinates because the state space is far too large. To make tabular RL practical and easy to study, [`TabularQPacmanController`](src/qlearning.hpp) solves two core RL challenges out of the box:
+
+### 1. Compact Tactical State Representation
+Instead of memorizing raw grid coordinates, the agent sees a ~20k-state local radar centered on Pac-Man:
+* **Where is the nearest food?** Direction to the closest pellet or energizer using a memoized maze BFS solver ([`src/pathfinder.hpp`](src/pathfinder.hpp)).
+* **Which exits are safe right now?** Looking ahead down each legal direction, the agent compares how quickly Pac-Man can reach the next junction against how quickly active ghosts can intercept him there—coding each direction as blocked, safe, caution, or danger.
+* **What tactical target matters most?** Direction toward a catchable frightened ghost, nearby energizer, bonus fruit, or best escape corridor when chased.
+* **Current heading:** Pac-Man's current direction of travel.
+
+### 2. Credit Assignment & Hyperparameter Experiments
+When Pac-Man walks into a dead-end corridor, getting caught happens several decisions later. To assign blame back to the mistake that caused the trap, the agent uses **Watkins's Q(λ)** with eligibility traces (cutting traces on random exploratory moves so earlier good moves aren't penalized for exploration).
+
+Because learning behavior changes as a policy matures, the CLI lets you run controlled experiments without recompiling:
+
 ```bash
-make test
+# Test decaying epsilon down to 0.001 at 95% of training with a pure-greedy tail,
+# while ramping gamma from short-sighted (0.80) early on to far-sighted (0.95) later:
+./pcman --headless --pacman qtable \
+  --train-episodes 100000 --trace-capacity 64 --lambda 0.90 \
+  --eps-schedule cutoff --eps-start 1.000 --eps-min 0.001 --eps-cutoff 0.95 \
+  --gamma-schedule linear --gamma-start 0.80 --gamma 0.95 \
+  --episodes 200 --qtable-file agent.bin
 ```
 
-Clean build artifacts:
-```bash
-make clean
+Key RL knobs exposed on the CLI (run `./pcman --help` for the full list):
+* **Exploration schedules (`--eps-schedule`, `--eps-start`, `--eps-min`, `--eps-cutoff`):** Compare keeping a small exploration floor (`floor`) against cutting exploration to `0.000` for the final stretch of training (`cutoff`).
+* **Discount factor horizon (`--gamma`, `--gamma-schedule`, `--gamma-start`):** Keep γ constant (`fixed`), ramp it linearly as the agent survives longer (`linear`), or couple it to `1 - ε` (`eps`).
+* **Eligibility traces (`--lambda`, `--trace-capacity`):** Tune how far backward terminal death penalties and rewards propagate along recent moves.
+* **Opponent mix (`--ghosts`, `--blinky`, `--pinky`, `--inky`, `--clyde`):** Test policies against the authentic game ghosts (`original`) or `random` ghosts per character.
+
+## Writing Your Own Agents or Search Algorithms
+
+If you want to implement your own policy—whether a heuristic bot, Monte Carlo Tree Search, or an external ML model—implement `IPacmanController` or `IGhostController` in [`src/controllers.hpp`](src/controllers.hpp) (or pass a lambda to `Game::SetPacmanController()`):
+
+```cpp
+#include "game.hpp"
+#include "pathfinder.hpp"
+
+class NearestDotAgent : public pcman::IPacmanController {
+public:
+    void OnReset() override { /* called at start of round */ }
+    void OnPacmanDied(const pcman::GameContext& ctx) override { /* terminal loss */ }
+    void OnLevelCleared(const pcman::GameContext& ctx) override { /* board cleared */ }
+
+    pcman::Direction ChooseDirection(const pcman::Pacman& self,
+                                      const pcman::GameContext& ctx,
+                                      const pcman::LegalActions& legal) override {
+        return pcman::FindNearestDotForPacman(ctx.maze, self, legal).firstAction;
+    }
+};
 ```
+
+A few building blocks make custom agents much nicer to write:
+* **Action masking (`LegalActions`):** Every decision call hands you the valid directions (including mid-corridor reversals and buffered corner turns for Pac-Man, while preventing illegal 180° turns for ghosts).
+* **Maze BFS helpers ([`src/pathfinder.hpp`](src/pathfinder.hpp)):** Cached shortest-path queries handle tunnel wrap-around and respect the asymmetry between Pac-Man (can reverse) and ghosts (cannot reverse outside dead ends).
+* **Tree search / rollouts:** Use `game.SaveState()` and `game.LoadState()` to clone game state, simulate candidate futures cheaply, and restore cleanly.
+
+## Game Mechanics Worth Knowing
+
+If you're designing features or reward functions, here are the quirks of *PC-Man* that show up in learned policies:
+* **Ghosts can't pull 180° U-turns** in corridors or intersections (only at dead ends), whereas Pac-Man can reverse immediately mid-corridor. Exploiting ghost commitment around loops is a huge part of high-level play.
+* **Speed asymmetry:** Eating pellets briefly slows Pac-Man down, frightened ghosts and ghosts in the vertical tunnel move at half speed, and ghosts pause briefly on 90° turns.
+* **Scoring:** 226 pellets (10 pts), 4 energizers (50 pts), frightened ghosts (200 → 400 → 800 → 1,600 pts), two fruit spawns per level at 170 and 80 dots remaining (100–5,000 pts), and a bonus life at 10,000 pts. Clearing all 230 dots advances to the next level.
+
+### GUI Controls
+Arrow keys, `WASD`, `ESDX`, `IJKL`, or gamepad to move; `Space` or `J` to start; `Ctrl+S` to mute/unmute audio; `Escape` to quit.
+
+## Codebase Map
+
+* [`src/qlearning.hpp`](src/qlearning.hpp) / [`src/qlearning.cpp`](src/qlearning.cpp) — Tactical state encoder, Watkins's Q(λ), reward shaping, checkpoint save/load
+* [`src/benchmark.hpp`](src/benchmark.hpp) / [`src/benchmark.cpp`](src/benchmark.cpp) — Training loop, ε/γ schedules, and headless multi-episode evaluator
+* [`src/pathfinder.hpp`](src/pathfinder.hpp) / [`src/pathfinder.cpp`](src/pathfinder.cpp) — Memoized maze BFS for directed ghost and reversible Pac-Man queries
+* [`src/controllers.hpp`](src/controllers.hpp) / [`src/controllers.cpp`](src/controllers.cpp) — Agent interfaces, legal action masking, baselines, and strategy registry
+* [`src/game.hpp`](src/game.hpp) / [`src/game.cpp`](src/game.cpp) — Core game loop, controller polling, lifecycle hooks, and state snapshots
+* [`src/entities.hpp`](src/entities.hpp), [`src/maze.hpp`](src/maze.hpp), [`src/serialization.hpp`](src/serialization.hpp) — Maze/entity rules, PRNG, and snapshot serialization
+* [`src/cga_renderer.hpp`](src/cga_renderer.hpp), [`src/pc_speaker.hpp`](src/pc_speaker.hpp), [`src/game_data.hpp`](src/game_data.hpp) — Self-contained CGA visuals, PC speaker synth, and embedded assets
+* [`tests/test_pcman.cpp`](tests/test_pcman.cpp) — Unit tests covering game rules, pathfinding, serialization, and Q-learning
 
 ---
 
-### Using `cmake`
-
-```bash
-mkdir build && cd build
-cmake ..
-cmake --build .
-./pcman
-```
-
----
-
-## Automated Test Suite
-
-The test suite in [`tests/test_pcman.cpp`](file:///Users/ankur/src/pcman/tests/test_pcman.cpp) validates 8 critical subsystems against the original binary disassembly:
-
-1. **ROM Data Integrity**: Verifies maze tiles, pellet counts (226 dots + 4 energizers = 230), sprite dimensions, and PIT audio tables.
-2. **Maze Collision & Dot Eating**: Tests grid navigation, pellet clearance, and energizer consumption.
-3. **Pac-Man Lane Centering & Cornering**: Tests exact coordinate math, wall collision avoidance, and instant 180° reversals.
-4. **Ghost AI & Manhattan Collision**: Verifies starting coordinates, in-pen release thresholds, target roulette selection, and $|dY| + |dX| \le 2$ collision detection.
-5. **IBM PC-XT Pacing & Timing**: Verifies 18.2065 Hz tick pacing, frightened half-speed movement, and dot consumption pauses.
-6. **Vertical Tunnel Wrap**: Tests top-to-bottom and bottom-to-top tunnel wrapping and ghost half-speed tunnel navigation.
-7. **Death Melting Sequence**: Verifies the exact 17-frame / 34-tick death animation progression.
-8. **Extra Life Scoring**: Verifies single extra life award trigger at 10,000 points and round reset behavior.
-
-Run tests anytime with:
-```bash
-make test
-```
-
----
-
-## Scoring & Rules
-
-* **Pellet (Dot)**: 10 points
-* **Energizer**: 50 points
-* **Frightened Ghosts**: 200 $\rightarrow$ 400 $\rightarrow$ 800 $\rightarrow$ 1,600 points (per energizer period)
-* **Fruit Bonuses**:
-  * Cherry: 100 points
-  * Strawberry: 300 points
-  * Peach: 500 points
-  * Apple: 700 points
-  * Grapes: 1,000 points
-  * Galaxian: 2,000 points
-  * Bell: 3,000 points
-  * Key: 5,000 points
-* **Fruit Spawns**: Appear below the ghost pen when remaining dots reach 170 (0xAA) and 80 (0x50), remaining active for ~7.4 seconds.
-* **Extra Life**: Awarded once upon reaching **10,000 points**.
-
----
-
-## Credits & Historical Context
-
-* **Original Game**: *PC-Man* (1982) by **Greg Kuperberg**, published by **Orion Software, Inc.**
-* **Port / Recreation**: Modern C++20 re-implementation reverse-engineered from the original MS-DOS `.COM` executable.
+*Built atop a C++20 recreation of Greg Kuperberg's 1982 IBM PC **PC-Man** (Orion Software, Inc.).*
